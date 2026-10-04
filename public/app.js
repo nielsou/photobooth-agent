@@ -49,50 +49,47 @@ function formatDate(iso) {
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : "—";
 }
 
-function printersTable(printers) {
-  const list = Array.isArray(printers) ? printers : printers ? [printers] : [];
-  if (list.length === 0) return el("p", { class: "hint" }, "Aucune imprimante détectée.");
+// Agents before 1.3.0 still report virtual printers.
+const VIRTUAL_PRINTER = /OneNote|Print to PDF|XPS Document Writer|^Fax$/i;
 
-  const rows = list.map((p) => {
+function printersCell(printers) {
+  const list = (Array.isArray(printers) ? printers : printers ? [printers] : [])
+    .filter((p) => !VIRTUAL_PRINTER.test(p.name || ""));
+
+  if (list.length === 0) return el("span", { class: "hint" }, "Aucune");
+
+  return el("ul", { class: "printers" }, ...list.map((p) => {
     // Win32_Printer.Status is often "Unknown" for perfectly healthy printers.
     const status = String(p.status || "Unknown");
-    const kind = status === "OK" ? "ok" : status === "Unknown" ? "muted" : "warn";
     const queue = Number(p.queueJobs) || 0;
-    return el("tr", {},
-      el("td", {}, p.name || "?", p.default ? " ★" : ""),
-      el("td", {}, p.workOffline ? badge("Hors ligne", "bad") : badge(status, kind)),
-      el("td", { class: "num" }, queue > 0 ? badge(String(queue), "warn") : "0"),
-    );
-  });
+    const state = p.workOffline
+      ? badge("Hors ligne", "bad")
+      : status === "OK" || status === "Unknown" ? null : badge(status, "warn");
 
-  return el("table", {},
-    el("thead", {}, el("tr", {}, el("th", {}, "Imprimante"), el("th", {}, "État"), el("th", { class: "num" }, "File"))),
-    el("tbody", {}, ...rows),
-  );
+    return el("li", {},
+      el("span", { class: "printer-name", title: p.default ? "Imprimante par défaut" : "" }, p.default ? "★ " : "", p.name || "?"),
+      state,
+      queue > 0 ? badge(`${queue} en file`, "warn") : null,
+    );
+  }));
 }
 
-function boothCard(booth) {
+function boothRow(booth) {
   const s = booth.status || {};
   const spoolerOk = String(s.spooler || "").toLowerCase() === "running";
 
-  const forget = booth.online ? null : el("div", { class: "card-foot" },
-    el("button", { type: "button", onclick: () => forgetBooth(booth.boothId) }, "Retirer du dashboard"));
+  const forget = booth.online ? null :
+    el("button", { type: "button", class: "small", onclick: () => forgetBooth(booth.boothId) }, "Retirer");
 
-  return el("article", { class: `card ${booth.online ? "" : "offline"}` },
-    el("div", { class: "card-head" },
-      el("h2", {}, booth.boothId),
-      booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad"),
-    ),
-    el("dl", {},
-      el("dt", {}, "Dernier heartbeat"), el("dd", { title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
-      el("dt", {}, "Internet"), el("dd", {}, s.internet ? badge("OK", "ok") : badge("Pas d'accès", "bad")),
-      el("dt", {}, "Spouleur"), el("dd", {}, badge(s.spooler || "?", spoolerOk ? "ok" : "bad")),
-      el("dt", {}, "Agent"), el("dd", {}, s.agentVersion || "?"),
-      el("dt", {}, "PowerShell"), el("dd", {}, s.powershellVersion || "?"),
-      el("dt", {}, "Horloge booth"), el("dd", {}, formatDate(s.timestamp)),
-    ),
-    printersTable(s.printers),
-    forget,
+  return el("tr", { class: booth.online ? "" : "offline" },
+    el("td", { class: "booth" }, booth.boothId),
+    el("td", {}, booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad")),
+    el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
+    el("td", {}, s.internet ? badge("OK", "ok") : badge("Coupé", "bad")),
+    el("td", {}, badge(spoolerOk ? "OK" : s.spooler || "?", spoolerOk ? "ok" : "bad")),
+    el("td", {}, printersCell(s.printers)),
+    el("td", { class: "nowrap" }, s.agentVersion || "?"),
+    el("td", {}, forget),
   );
 }
 
@@ -106,6 +103,7 @@ function showLogin() {
   $("login").hidden = false;
   $("logout").hidden = true;
   $("booths").replaceChildren();
+  $("fleet").hidden = true;
   $("empty").hidden = true;
   $("summary").textContent = "";
   $("updated").textContent = "";
@@ -146,7 +144,8 @@ async function refresh() {
     $("summary").textContent = `${online}/${booths.length} en ligne`;
     $("updated").textContent = `MAJ ${new Date().toLocaleTimeString()}`;
     $("empty").hidden = booths.length > 0;
-    $("booths").replaceChildren(...booths.map(boothCard));
+    $("fleet").hidden = booths.length === 0;
+    $("booths").replaceChildren(...booths.map(boothRow));
   } catch (error) {
     showError(error.message);
   }

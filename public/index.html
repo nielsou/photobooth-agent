@@ -26,7 +26,23 @@
 
     <p id="error" class="error" hidden></p>
     <p id="empty" class="hint" hidden>Aucun booth n'a encore envoyé de heartbeat.</p>
-    <section id="booths"></section>
+    <div id="fleet" class="table-wrap" hidden>
+      <table>
+        <thead>
+          <tr>
+            <th>Ordinateur</th>
+            <th>État</th>
+            <th>Vu</th>
+            <th>Internet</th>
+            <th>Spouleur</th>
+            <th>Imprimantes</th>
+            <th>Agent</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="booths"></tbody>
+      </table>
+    </div>
   </main>
 
   <script src="/app.js"></script>

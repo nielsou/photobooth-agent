@@ -93,26 +93,36 @@ button:hover { border-color: var(--accent); }
 .hint { color: var(--muted); margin: 0; }
 .error { color: var(--bad); background: var(--bad-bg); padding: 10px 12px; border-radius: 6px; }
 
-#booths {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
-}
-
-.card {
+.table-wrap {
+  overflow-x: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 14px;
-  display: grid;
-  gap: 10px;
-  min-width: 0;
 }
 
-.card.offline { border-color: var(--bad); }
+.table-wrap[hidden] { display: none; }
 
-.card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.card-head h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+table { width: 100%; border-collapse: collapse; }
+
+th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--bg);
+}
+
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr.offline td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+
+td.booth { font-weight: 600; white-space: nowrap; }
+td.nowrap { white-space: nowrap; }
+
+.printers { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.printers li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.printer-name { min-width: 0; }
 
 .badge {
   display: inline-block;
@@ -128,15 +138,4 @@ button:hover { border-color: var(--accent); }
 .badge.warn { color: var(--warn); background: var(--warn-bg); }
 .badge.muted { color: var(--muted); background: var(--bg); }
 
-dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
-dt { color: var(--muted); }
-dd { margin: 0; overflow-wrap: anywhere; }
-
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; color: var(--muted); font-weight: 500; }
-th, td { padding: 4px 6px 4px 0; border-top: 1px solid var(--border); vertical-align: top; }
-td { overflow-wrap: anywhere; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
-
-.card-foot { display: flex; justify-content: flex-end; }
-.card-foot button { font-size: 12px; color: var(--muted); }
+button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
