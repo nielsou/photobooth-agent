@@ -101,23 +101,19 @@ Set-Content `
 
 Write-Host "Creating startup task..."
 
-$Action = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\agent.ps1`""
+schtasks.exe /Create `
+    /TN "Photobooth Agent" `
+    /SC ONSTART `
+    /RU SYSTEM `
+    /RL HIGHEST `
+    /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\agent.ps1`"" `
+    /F
 
-$Trigger = New-ScheduledTaskTrigger -AtStartup
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to create scheduled task. Exit code: $LASTEXITCODE"
+}
 
-$Principal = New-ScheduledTaskPrincipal `
-    -UserId "SYSTEM" `
-    -LogonType ServiceAccount `
-    -RunLevel Highest
-
-Register-ScheduledTask `
-    -TaskName "Photobooth Agent" `
-    -Action $Action `
-    -Trigger $Trigger `
-    -Principal $Principal `
-    -Force | Out-Null
+Write-Host "Startup task created successfully."
 
 # --------------------------------------------------
 # START AGENT
