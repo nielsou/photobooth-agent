@@ -12,6 +12,10 @@ $HeartbeatInterval = 30
 $Repo = "nielsou/photobooth-agent"
 $UpdateCheckInterval = 300
 
+# On power-on, print jobs older than this are leftovers from a previous event.
+$PurgeJobsOlderThanHours = 2
+$BootFile = "$AgentDir\last-boot.txt"
+
 # Windows PowerShell 5.1 may default to TLS 1.0, which Vercel rejects.
 [Net.ServicePointManager]::SecurityProtocol = `
     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -187,6 +191,55 @@ function Get-AgentStatus {
 }
 
 # --------------------------------------------------
+# PRINT QUEUE PURGE ON POWER-ON
+# --------------------------------------------------
+
+# Removes jobs older than $PurgeJobsOlderThanHours from every print queue, so
+# photos stuck from a previous event are not printed at the next one. Recent
+# jobs are kept (e.g. a booth rebooted in the middle of an event).
+function Clear-OldPrintJobs {
+    param([string]$Reason)
+
+    $Cutoff = (Get-Date).AddHours(-$PurgeJobsOlderThanHours)
+    $Removed = 0
+
+    foreach ($Printer in @(Get-Printer -ErrorAction Stop)) {
+
+        $OldJobs = @(Get-PrintJob -PrinterName $Printer.Name -ErrorAction SilentlyContinue |
+            Where-Object { $_.SubmittedTime -lt $Cutoff })
+
+        foreach ($Job in $OldJobs) {
+            try {
+                $Job | Remove-PrintJob -ErrorAction Stop
+                $Removed++
+                Write-Log "Purged job '$($Job.DocumentName)' on '$($Printer.Name)' (submitted $($Job.SubmittedTime))"
+            }
+            catch {
+                Write-Log "Could not purge job '$($Job.DocumentName)' on '$($Printer.Name)': $($_.Exception.Message)"
+            }
+        }
+    }
+
+    Write-Log "Print queue purge ($Reason): $Removed job(s) older than $PurgeJobsOlderThanHours h removed"
+}
+
+# True when Windows booted since the last time the agent ran. A restart of
+# the agent alone (self-update, reinstall) keeps the same boot time.
+function Test-NewBoot {
+
+    $BootTime = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString("o")
+    $Previous = $null
+
+    if (Test-Path $BootFile) {
+        $Previous = (Get-Content $BootFile -Raw).Trim()
+    }
+
+    Set-Content -Path $BootFile -Value $BootTime
+
+    return $BootTime -ne $Previous
+}
+
+# --------------------------------------------------
 # REMOTE HEARTBEAT
 # --------------------------------------------------
 
@@ -326,11 +379,36 @@ Write-Log "Agent version: $AgentVersion"
 Write-Log "Booth ID: $BoothId"
 Write-Log "Heartbeat interval: $HeartbeatInterval seconds"
 
+try {
+    if (Test-NewBoot) {
+        Clear-OldPrintJobs -Reason "Windows startup"
+    }
+}
+catch {
+    Write-Log "Startup purge error: $($_.Exception.Message)"
+}
+
+# With Fast Startup, "Shut down" hibernates the system and this process just
+# resumes later: a long gap between two loop turns means the PC was off/asleep.
+$LastLoopTime = Get-Date
+
 # --------------------------------------------------
 # HEARTBEAT LOOP
 # --------------------------------------------------
 
 while ($true) {
+
+    $Gap = ((Get-Date) - $LastLoopTime).TotalMinutes
+    $LastLoopTime = Get-Date
+
+    if ($Gap -gt 10) {
+        try {
+            Clear-OldPrintJobs -Reason "resumed after $([int]$Gap) min off/asleep"
+        }
+        catch {
+            Write-Log "Resume purge error: $($_.Exception.Message)"
+        }
+    }
 
     # Keep the log under ~5 MB (previous content kept in agent.log.1).
     if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt 5MB) {

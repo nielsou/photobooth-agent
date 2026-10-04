@@ -65,6 +65,12 @@ agent local-only (status.json only).
 The agent logs to `C:\ProgramData\PhotoboothAgent\logs\agent.log`
 (`Remote heartbeat sent` / `Remote heartbeat error: ...`), rotated at 5 MB.
 
+On power-on (real Windows startup, or resume after a Fast Startup shutdown/sleep,
+detected as a > 10 min gap between two loop turns), the agent removes print jobs
+older than 2 hours from every queue, so leftovers from a previous event are not
+printed at the next one. Recent jobs are kept. Restarting the agent alone (e.g. a
+self-update) does not purge.
+
 The install folder is writable only by SYSTEM and Administrators (the agent runs as
 SYSTEM, so a user-writable script would be a privilege escalation).
 
