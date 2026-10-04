@@ -1,8 +1,9 @@
 #Requires -Version 5.1
 
 # Usage:
-#   install.ps1 [-ApiUrl https://<project>.vercel.app] [-AgentToken <AGENT_TOKEN>]
-# Missing values are taken from an existing config.json, otherwise prompted.
+#   install.ps1 [-AgentToken <AGENT_TOKEN>] [-ApiUrl https://<project>.vercel.app]
+# Missing values are taken from an existing config.json; the token is otherwise
+# prompted and ApiUrl defaults to the production dashboard.
 # The token is a secret: never commit it, it only lives on the booth.
 
 param(
@@ -47,6 +48,7 @@ if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $InstallDir = "C:\ProgramData\PhotoboothAgent"
 $ConfigFile = "$InstallDir\config.json"
 $TaskName = "Photobooth Agent"
+$DefaultApiUrl = "https://photobooth-agent.vercel.app"
 $RepoRawUrl = "https://raw.githubusercontent.com/nielsou/photobooth-agent/main"
 
 Write-Host ""
@@ -144,12 +146,10 @@ if (Test-Path $ConfigFile) {
 if (-not $ApiUrl -and $ExistingConfig) { $ApiUrl = $ExistingConfig.apiUrl }
 if (-not $AgentToken -and $ExistingConfig) { $AgentToken = $ExistingConfig.agentToken }
 
-if (-not $ApiUrl) {
-    $ApiUrl = Read-Host "Dashboard URL (e.g. https://photobooth-agent.vercel.app), empty to skip"
-}
+if (-not $ApiUrl) { $ApiUrl = $DefaultApiUrl }
 
-if ($ApiUrl -and -not $AgentToken) {
-    $SecureToken = Read-Host "Agent token (AGENT_TOKEN from Vercel)" -AsSecureString
+if (-not $AgentToken) {
+    $SecureToken = Read-Host "Agent token (AGENT_TOKEN), empty to keep the agent local-only" -AsSecureString
     $AgentToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken))
 }
