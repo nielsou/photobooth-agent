@@ -174,9 +174,10 @@ function printersCell(boothId, printers) {
     return el("li", {},
       ...problems.map(([label, severity]) => badge(label, severity)),
       ready ? badge("Prête", "ok") : null,
-      el("span", { class: "printer-name" }, p.name || "?"),
+      el("span", { class: "printer-name" },
+        p.default ? el("span", { class: "star", title: "Imprimante par défaut de Windows" }, "★ ") : null,
+        p.name || "?"),
       connection ? el("span", { class: "hint" }, connection) : null,
-      p.default ? el("span", { class: "hint", title: "Imprimante par défaut de Windows" }, "· par défaut") : null,
       p.connected === false ? null : queueView(p, `${boothId}|${p.name}`),
     );
   }));

@@ -143,3 +143,4 @@ button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
 .jobs summary { cursor: pointer; list-style: none; display: inline-block; }
 .jobs summary::-webkit-details-marker { display: none; }
 .jobs ul { margin: 6px 0 2px; padding-left: 18px; color: var(--muted); font-size: 12px; }
+.star { color: #f5b301; }
