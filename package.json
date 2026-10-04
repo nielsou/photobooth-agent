@@ -4,6 +4,9 @@
   "type": "module",
   "description": "Vercel API and dashboard for the Photobooth Windows agent",
   "engines": {
-    "node": "22.x"
+    "node": "24.x"
+  },
+  "dependencies": {
+    "redis": "^5.12.1"
   }
 }

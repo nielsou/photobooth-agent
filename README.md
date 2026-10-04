@@ -6,7 +6,7 @@ show the latest status of every booth.
 ```
 booth (agent.ps1, every 30 s)
   ├─ writes C:\ProgramData\PhotoboothAgent\status.json
-  └─ POST /api/heartbeat ──► Vercel ──► Upstash Redis (latest status per booth)
+  └─ POST /api/heartbeat ──► Vercel ──► Redis (latest status per booth)
                                           ▲
 dashboard (public/) ── GET /api/booths ───┘
 ```
@@ -32,11 +32,13 @@ The booth ID is `$env:COMPUTERNAME`. A booth is shown offline after 90 s
 
 ## Vercel setup (once)
 
+Already done for project `photobooth-agent` (team "Niels' projects"), kept here for reference.
+
 1. Import `nielsou/photobooth-agent` in Vercel (framework preset: **Other**, no build command).
    Every push to `main` then redeploys automatically.
-2. **Storage → Upstash for Redis** (Marketplace) → create a database and connect it to the
-   project. This adds `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
-3. **Settings → Environment Variables**, add (Production):
+2. **Storage** → connect a Redis database to the project (currently `redis-lime-mountain`).
+   This adds `REDIS_URL`. Data lives in the hash `photobooth:booths`.
+3. **Settings → Environment Variables**, add (Production, type Sensitive):
    - `AGENT_TOKEN` — long random string shared by the booths
    - `DASHBOARD_TOKEN` — long random string you type into the dashboard
 
@@ -50,14 +52,15 @@ See `.env.example` for the variable names (no values).
 
 ## Booth install / update
 
-Run in PowerShell on the booth (it elevates itself):
+Double-click `installer\install.cmd` on the booth, or run in PowerShell (it elevates itself):
 
 ```powershell
-.\install.ps1 -ApiUrl https://<project>.vercel.app -AgentToken <AGENT_TOKEN>
+.\install.ps1 -AgentToken "<AGENT_TOKEN>"
 ```
 
-Without parameters, the installer reuses the existing `config.json`, or asks for the
-URL and token. Leaving the URL empty keeps the agent local-only (status.json only).
+`-ApiUrl` defaults to the production dashboard. Without `-AgentToken`, the installer
+reuses the existing `config.json` or asks for the token; leaving it empty keeps the
+agent local-only (status.json only).
 
 The agent logs to `C:\ProgramData\PhotoboothAgent\logs\agent.log`
 (`Remote heartbeat sent` / `Remote heartbeat error: ...`).
