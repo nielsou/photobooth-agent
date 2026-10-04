@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $InstallDir = "C:\ProgramData\PhotoboothAgent"
-$RepoUrl = "https://github.com/nielsou/photobooth-agent.git"
+$RepoRawUrl = "https://raw.githubusercontent.com/nielsou/photobooth-agent/main"
 
 Write-Host ""
 Write-Host "========================================="
@@ -9,32 +9,71 @@ Write-Host "      PHOTOBOOTH AGENT INSTALLER"
 Write-Host "========================================="
 Write-Host ""
 
+# --------------------------------------------------
+# CREATE DIRECTORIES
+# --------------------------------------------------
+
 Write-Host "Creating installation directory..."
-New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
-Write-Host "Downloading latest agent..."
+New-Item -ItemType Directory `
+    -Path $InstallDir `
+    -Force | Out-Null
 
-$TempDir = Join-Path $env:TEMP "PhotoboothAgentInstall"
+New-Item -ItemType Directory `
+    -Path "$InstallDir\logs" `
+    -Force | Out-Null
 
-if (Test-Path $TempDir) {
-    Remove-Item $TempDir -Recurse -Force
-}
+# --------------------------------------------------
+# DOWNLOAD VERSION
+# --------------------------------------------------
 
-git clone $RepoUrl $TempDir
+Write-Host "Checking latest version..."
+
+$RemoteVersion = Invoke-RestMethod `
+    -Uri "$RepoRawUrl/VERSION" `
+    -UseBasicParsing
+
+$RemoteVersion = $RemoteVersion.Trim()
+
+Write-Host "Latest version: $RemoteVersion"
+
+# --------------------------------------------------
+# DOWNLOAD AGENT
+# --------------------------------------------------
+
+Write-Host "Downloading agent..."
+
+$TempAgent = "$env:TEMP\photobooth-agent.ps1"
+
+Invoke-WebRequest `
+    -Uri "$RepoRawUrl/agent/agent.ps1" `
+    -OutFile $TempAgent `
+    -UseBasicParsing
+
+# --------------------------------------------------
+# INSTALL
+# --------------------------------------------------
 
 Write-Host "Installing agent..."
 
-Copy-Item "$TempDir\agent\agent.ps1" "$InstallDir\agent.ps1" -Force
+Copy-Item `
+    $TempAgent `
+    "$InstallDir\agent.ps1" `
+    -Force
 
-Write-Host "Creating log directory..."
+Set-Content `
+    -Path "$InstallDir\VERSION" `
+    -Value $RemoteVersion
 
-New-Item -ItemType Directory -Path "$InstallDir\logs" -Force | Out-Null
+# --------------------------------------------------
+# CREATE STARTUP TASK
+# --------------------------------------------------
 
 Write-Host "Creating startup task..."
 
 $Action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
-    -Argument "-ExecutionPolicy Bypass -File `"$InstallDir\agent.ps1`""
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\agent.ps1`""
 
 $Trigger = New-ScheduledTaskTrigger -AtStartup
 
@@ -50,20 +89,28 @@ Register-ScheduledTask `
     -Principal $Principal `
     -Force | Out-Null
 
-Write-Host ""
-Write-Host "Installation complete."
-Write-Host "Booth: $env:COMPUTERNAME"
-Write-Host ""
+# --------------------------------------------------
+# START AGENT
+# --------------------------------------------------
 
 Write-Host "Starting agent..."
 
 Start-Process `
     -FilePath "powershell.exe" `
-    -ArgumentList "-ExecutionPolicy Bypass -File `"$InstallDir\agent.ps1`"" `
+    -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\agent.ps1`"" `
     -Wait
+
+# --------------------------------------------------
+# CLEANUP
+# --------------------------------------------------
+
+Remove-Item $TempAgent -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "========================================="
-Write-Host "          INSTALLATION COMPLETE"
+Write-Host "       INSTALLATION COMPLETE"
 Write-Host "========================================="
+Write-Host ""
+Write-Host "Booth: $env:COMPUTERNAME"
+Write-Host "Version: $RemoteVersion"
 Write-Host ""
