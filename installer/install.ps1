@@ -1,4 +1,32 @@
+#Requires -Version 5.1
+
 $ErrorActionPreference = "Stop"
+
+# --------------------------------------------------
+# REQUIRE ADMINISTRATOR
+# --------------------------------------------------
+
+$CurrentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$Principal = New-Object Security.Principal.WindowsPrincipal($CurrentIdentity)
+
+if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+
+    Write-Host "Administrator privileges required."
+    Write-Host "Requesting elevation..."
+
+    $Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+
+    Start-Process `
+        -FilePath "powershell.exe" `
+        -ArgumentList $Arguments `
+        -Verb RunAs
+
+    exit
+}
+
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
 
 $InstallDir = "C:\ProgramData\PhotoboothAgent"
 $RepoRawUrl = "https://raw.githubusercontent.com/nielsou/photobooth-agent/main"
@@ -15,11 +43,13 @@ Write-Host ""
 
 Write-Host "Creating installation directory..."
 
-New-Item -ItemType Directory `
+New-Item `
+    -ItemType Directory `
     -Path $InstallDir `
     -Force | Out-Null
 
-New-Item -ItemType Directory `
+New-Item `
+    -ItemType Directory `
     -Path "$InstallDir\logs" `
     -Force | Out-Null
 
@@ -97,14 +127,16 @@ Write-Host "Starting agent..."
 
 Start-Process `
     -FilePath "powershell.exe" `
-    -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\agent.ps1`"" `
-    -Wait
+    -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$InstallDir\agent.ps1`""
 
 # --------------------------------------------------
 # CLEANUP
 # --------------------------------------------------
 
-Remove-Item $TempAgent -Force -ErrorAction SilentlyContinue
+Remove-Item `
+    $TempAgent `
+    -Force `
+    -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "========================================="
