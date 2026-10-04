@@ -4,7 +4,10 @@ import { readFile } from "node:fs/promises";
 // Serves installer/install.cmd as a download: GitHub raw serves it as text,
 // which browsers display instead of saving. Contains no secret.
 export async function GET() {
-  const body = await readFile(new URL("../installer/install.cmd", import.meta.url));
+  const source = await readFile(new URL("../installer/install.cmd", import.meta.url), "utf8");
+
+  // Git stores the file with LF; cmd.exe expects CRLF.
+  const body = source.replace(/\r?\n/g, "\r\n");
 
   return new Response(body, {
     headers: {
