@@ -1,0 +1,12 @@
+# Secrets: never commit these. Configure them in Vercel → Settings → Environment Variables.
+.env
+.env.*
+!.env.example
+
+.vercel/
+node_modules/
+
+# Booth-side runtime files (they live in C:\ProgramData\PhotoboothAgent)
+config.json
+status.json
+logs/

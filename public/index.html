@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Photobooth Fleet</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <h1>Photobooth Fleet</h1>
+    <div class="meta">
+      <span id="summary"></span>
+      <span id="updated"></span>
+      <button id="logout" type="button" hidden>Déconnexion</button>
+    </div>
+  </header>
+
+  <main>
+    <form id="login" hidden>
+      <label for="token">Dashboard token</label>
+      <input id="token" type="password" autocomplete="current-password" required>
+      <button type="submit">Ouvrir</button>
+      <p class="hint">Valeur de la variable <code>DASHBOARD_TOKEN</code> définie dans Vercel.</p>
+    </form>
+
+    <p id="error" class="error" hidden></p>
+    <p id="empty" class="hint" hidden>Aucun booth n'a encore envoyé de heartbeat.</p>
+    <section id="booths"></section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
