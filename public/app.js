@@ -60,7 +60,7 @@ function printersTable(printers) {
     const queue = Number(p.queueJobs) || 0;
     return el("tr", {},
       el("td", {}, p.name || "?", p.default ? " ★" : ""),
-      el("td", {}, badge(status, kind)),
+      el("td", {}, p.workOffline ? badge("Hors ligne", "bad") : badge(status, kind)),
       el("td", { class: "num" }, queue > 0 ? badge(String(queue), "warn") : "0"),
     );
   });
@@ -123,7 +123,7 @@ async function api(path, options = {}) {
     token = "";
     writeToken("");
     showLogin();
-    throw new Error("Token invalide.");
+    throw new Error("Mot de passe incorrect.");
   }
 
   const data = await response.json().catch(() => ({}));

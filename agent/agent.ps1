@@ -74,7 +74,12 @@ function Get-AgentStatus {
 
     try {
 
-        $Printers = Get-CimInstance Win32_Printer
+        # Skip virtual printers (PDF, XPS, OneNote, Fax): they have no physical port.
+        $Printers = Get-CimInstance Win32_Printer |
+            Where-Object {
+                $_.PortName -notmatch '^(nul|PORTPROMPT|SHRFAX|FILE):$' -and
+                $_.DriverName -notmatch 'OneNote|Print To PDF|XPS Document Writer|Fax'
+            }
 
         foreach ($Printer in $Printers) {
 
@@ -99,6 +104,7 @@ function Get-AgentStatus {
                 default      = [bool]$Printer.Default
                 status       = $Printer.Status
                 printerState = $Printer.PrinterState
+                workOffline  = [bool]$Printer.WorkOffline
                 queueJobs    = $PrinterQueue
             }
         }
