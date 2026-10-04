@@ -140,7 +140,7 @@ function queueView(p, key) {
 
   const oldest = Number(p.oldestJobSeconds) || 0;
   const stuck = oldest > STUCK_JOB_SECONDS;
-  const label = `${count} en file` + (oldest ? ` · plus ancien ${formatDuration(oldest)}` : "");
+  const label = `${count} en file` + (stuck ? ` · bloquée ${formatDuration(oldest)}` : "");
 
   const jobs = asList(p.jobs).map((job) => {
     const flag = String(job.status || "").split(",")[0].trim();
@@ -151,7 +151,7 @@ function queueView(p, key) {
   if (jobs.length === 0) return badge(label, stuck ? "bad" : "warn");
 
   const details = el("details", { class: "jobs" },
-    el("summary", {}, badge(stuck ? `${label} · bloquée ?` : label, stuck ? "bad" : "warn")),
+    el("summary", {}, badge(label, stuck ? "bad" : "warn")),
     el("ul", {}, ...jobs),
   );
   details.dataset.key = key;
@@ -171,14 +171,18 @@ function printersCell(boothId, printers) {
     const ready = p.connected === true && !problems.some(([, s]) => s === "bad")
       && !problems.some(([label]) => label === "Impression");
 
+    // Two lines on phones (state + name / connection + queue), one on desktop.
     return el("li", {},
-      ...problems.map(([label, severity]) => badge(label, severity)),
-      ready ? badge("Prête", "ok") : null,
-      el("span", { class: "printer-name" },
-        p.default ? el("span", { class: "star", title: "Imprimante par défaut de Windows" }, "★ ") : null,
-        p.name || "?"),
-      connection ? el("span", { class: "hint" }, connection) : null,
-      p.connected === false ? null : queueView(p, `${boothId}|${p.name}`),
+      el("div", { class: "printer-line" },
+        ...problems.map(([label, severity]) => badge(label, severity)),
+        ready ? badge("Prête", "ok") : null,
+        p.default ? el("span", { class: "star", title: "Imprimante par défaut de Windows" }, "★") : null,
+        el("span", { class: "printer-name", title: p.name || "" }, p.name || "?"),
+      ),
+      el("div", { class: "printer-line" },
+        connection ? el("span", { class: "hint" }, connection) : null,
+        p.connected === false ? null : queueView(p, `${boothId}|${p.name}`),
+      ),
     );
   }));
 }
@@ -196,7 +200,7 @@ function boothRow(booth) {
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
     el("td", {}, s.internet ? badge("OK", "ok") : badge("Coupé", "bad")),
     el("td", {}, badge(spoolerOk ? "OK" : s.spooler || "?", spoolerOk ? "ok" : "bad")),
-    el("td", {}, printersCell(booth.boothId, s.printers)),
+    el("td", { class: "printers-cell" }, printersCell(booth.boothId, s.printers)),
     el("td", { class: "nowrap" }, s.agentVersion || "?"),
     el("td", {}, forget),
   );
