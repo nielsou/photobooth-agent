@@ -167,7 +167,10 @@ if (-not $AgentToken -and $ExistingConfig) { $AgentToken = $ExistingConfig.agent
 if (-not $ApiUrl) { $ApiUrl = $DefaultApiUrl }
 
 if (-not $AgentToken) {
-    $SecureToken = Read-Host "Agent token (AGENT_TOKEN), empty to keep the agent local-only" -AsSecureString
+    Write-Host ""
+    Write-Host "Colle le code d'installation recu par email (clic droit ou Ctrl+V), puis Entree."
+    Write-Host "(Laisser vide = surveillance locale uniquement, sans dashboard.)"
+    $SecureToken = Read-Host "Code d'installation" -AsSecureString
     $AgentToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken))
 }
