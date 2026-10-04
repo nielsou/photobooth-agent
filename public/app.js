@@ -52,24 +52,132 @@ function formatDate(iso) {
 // Agents before 1.3.0 still report virtual printers.
 const VIRTUAL_PRINTER = /OneNote|Print to PDF|XPS Document Writer|^Fax$/i;
 
-function printersCell(printers) {
-  const list = (Array.isArray(printers) ? printers : printers ? [printers] : [])
-    .filter((p) => !VIRTUAL_PRINTER.test(p.name || ""));
+// Spooler printer status flags (Get-Printer PrinterStatus) → label, severity.
+const PRINTER_STATUS = {
+  Error: ["Erreur", "bad"],
+  PaperJam: ["Bourrage", "bad"],
+  PaperOut: ["Plus de papier", "bad"],
+  PaperProblem: ["Problème papier", "bad"],
+  OutputBinFull: ["Bac de sortie plein", "bad"],
+  NoToner: ["Plus d'encre", "bad"],
+  DoorOpen: ["Capot ouvert", "bad"],
+  UserIntervention: ["Intervention requise", "bad"],
+  OutOfMemory: ["Mémoire pleine", "bad"],
+  Offline: ["Hors ligne", "bad"],
+  ServerOffline: ["Hors ligne", "bad"],
+  NotAvailable: ["Indisponible", "bad"],
+  Paused: ["En pause", "warn"],
+  ManualFeed: ["Alimentation manuelle", "warn"],
+  TonerLow: ["Encre faible", "warn"],
+  DriverUpdateNeeded: ["Pilote à mettre à jour", "warn"],
+  PendingDeletion: ["Suppression en cours", "warn"],
+  WarmingUp: ["Préchauffage", "muted"],
+  Initializing: ["Démarrage", "muted"],
+  PowerSave: ["Veille", "muted"],
+  Waiting: ["En attente", "muted"],
+  Printing: ["Impression", "ok"],
+  Processing: ["Impression", "ok"],
+  Busy: ["Impression", "ok"],
+  IoActive: ["Impression", "ok"],
+};
+
+// Win32_Printer.DetectedErrorState → label, severity.
+const ERROR_STATE = {
+  3: ["Papier faible", "warn"],
+  4: ["Plus de papier", "bad"],
+  5: ["Encre faible", "warn"],
+  6: ["Plus d'encre", "bad"],
+  7: ["Capot ouvert", "bad"],
+  8: ["Bourrage", "bad"],
+  9: ["Hors ligne", "bad"],
+  10: ["Maintenance requise", "bad"],
+  11: ["Bac de sortie plein", "bad"],
+};
+
+const JOB_STATUS = {
+  Printing: "Impression", Spooling: "Envoi", Paused: "En pause", Error: "Erreur",
+  Offline: "Hors ligne", PaperOut: "Plus de papier", Blocked: "Bloqué",
+  UserIntervention: "Intervention requise", Deleting: "Suppression",
+  Printed: "Imprimé", Complete: "Imprimé", Normal: "En attente",
+};
+
+// A job waiting longer than this means the queue is stuck.
+const STUCK_JOB_SECONDS = 120;
+
+function asList(value) {
+  return Array.isArray(value) ? value : value ? [value] : [];
+}
+
+function formatDuration(seconds) {
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
+  return `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`;
+}
+
+// Returns [[label, severity], ...] describing the printer's state.
+function printerProblems(p) {
+  if (p.connected === false) return [["Débranchée", "bad"]];
+
+  const flags = String(p.status || "").split(",").map((f) => f.trim()).filter(Boolean);
+  const states = [];
+
+  if (p.workOffline && !flags.includes("Offline")) states.push(["Hors ligne", "bad"]);
+  for (const flag of flags) if (PRINTER_STATUS[flag]) states.push(PRINTER_STATUS[flag]);
+  if (ERROR_STATE[p.errorState]) states.push(ERROR_STATE[p.errorState]);
+
+  // Deduplicate labels (e.g. PaperOut flag + "no paper" error state).
+  return states.filter(([label], i) => states.findIndex(([l]) => l === label) === i);
+}
+
+function isPrinterInTrouble(p) {
+  return printerProblems(p).some(([, severity]) => severity === "bad")
+    || (Number(p.oldestJobSeconds) || 0) > STUCK_JOB_SECONDS;
+}
+
+function queueView(p, key) {
+  const count = Number(p.queueJobs) || 0;
+  if (count === 0) return badge("File vide", "muted");
+
+  const oldest = Number(p.oldestJobSeconds) || 0;
+  const stuck = oldest > STUCK_JOB_SECONDS;
+  const label = `${count} en file` + (oldest ? ` · plus ancien ${formatDuration(oldest)}` : "");
+
+  const jobs = asList(p.jobs).map((job) => {
+    const flag = String(job.status || "").split(",")[0].trim();
+    const pages = job.totalPages ? ` · ${job.pagesPrinted || 0}/${job.totalPages} p.` : "";
+    return el("li", {}, `${job.document || "Sans nom"} — ${JOB_STATUS[flag] || flag || "?"}${pages}`);
+  });
+
+  if (jobs.length === 0) return badge(label, stuck ? "bad" : "warn");
+
+  const details = el("details", { class: "jobs" },
+    el("summary", {}, badge(stuck ? `${label} · bloquée ?` : label, stuck ? "bad" : "warn")),
+    el("ul", {}, ...jobs),
+  );
+  details.dataset.key = key;
+  return details;
+}
+
+function printersCell(boothId, printers) {
+  const list = asList(printers).filter((p) => !VIRTUAL_PRINTER.test(p.name || ""));
 
   if (list.length === 0) return el("span", { class: "hint" }, "Aucune");
 
   return el("ul", { class: "printers" }, ...list.map((p) => {
-    // Win32_Printer.Status is often "Unknown" for perfectly healthy printers.
-    const status = String(p.status || "Unknown");
-    const queue = Number(p.queueJobs) || 0;
-    const state = p.workOffline
-      ? badge("Hors ligne", "bad")
-      : status === "OK" || status === "Unknown" ? null : badge(status, "warn");
+    const problems = printerProblems(p);
+    const connection = p.connection === "usb" ? "USB" : p.connection === "network" ? "Réseau" : null;
+
+    // Older agents (< 1.4.0) don't report connection/queue details.
+    const ready = p.connected === true && !problems.some(([, s]) => s === "bad")
+      && !problems.some(([label]) => label === "Impression");
 
     return el("li", {},
-      el("span", { class: "printer-name", title: p.default ? "Imprimante par défaut" : "" }, p.default ? "★ " : "", p.name || "?"),
-      state,
-      queue > 0 ? badge(`${queue} en file`, "warn") : null,
+      el("span", { class: "printer-name", title: p.default ? "Imprimante par défaut" : "" },
+        p.default ? "★ " : "", p.name || "?"),
+      connection ? el("span", { class: "hint" }, connection) : null,
+      ...problems.map(([label, severity]) => badge(label, severity)),
+      ready ? badge("Prête", "ok") : null,
+      p.connected === false ? null : queueView(p, `${boothId}|${p.name}`),
     );
   }));
 }
@@ -87,7 +195,7 @@ function boothRow(booth) {
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
     el("td", {}, s.internet ? badge("OK", "ok") : badge("Coupé", "bad")),
     el("td", {}, badge(spoolerOk ? "OK" : s.spooler || "?", spoolerOk ? "ok" : "bad")),
-    el("td", {}, printersCell(s.printers)),
+    el("td", {}, printersCell(booth.boothId, s.printers)),
     el("td", { class: "nowrap" }, s.agentVersion || "?"),
     el("td", {}, forget),
   );
@@ -137,15 +245,23 @@ async function refresh() {
     const data = await api("/api/booths");
     const booths = data.booths || [];
     const online = booths.filter((b) => b.online).length;
+    const troubled = booths
+      .filter((b) => b.online)
+      .flatMap((b) => asList(b.status?.printers))
+      .filter((p) => !VIRTUAL_PRINTER.test(p.name || "") && isPrinterInTrouble(p)).length;
 
     $("login").hidden = true;
     $("logout").hidden = false;
     showError("");
-    $("summary").textContent = `${online}/${booths.length} en ligne`;
+    $("summary").textContent = `${online}/${booths.length} en ligne`
+      + (troubled ? ` · ${troubled} imprimante${troubled > 1 ? "s" : ""} en défaut` : "");
     $("updated").textContent = `MAJ ${new Date().toLocaleTimeString()}`;
     $("empty").hidden = booths.length > 0;
     $("fleet").hidden = booths.length === 0;
+    // Keep expanded print queues open across refreshes.
+    const open = new Set([...document.querySelectorAll("details.jobs[open]")].map((d) => d.dataset.key));
     $("booths").replaceChildren(...booths.map(boothRow));
+    for (const d of document.querySelectorAll("details.jobs")) d.open = open.has(d.dataset.key);
   } catch (error) {
     showError(error.message);
   }

@@ -73,6 +73,24 @@ New-Item `
     -Path "$InstallDir\logs" `
     -Force | Out-Null
 
+# The agent runs as SYSTEM and updates itself from this folder: only SYSTEM
+# and Administrators may write here, other users can only read.
+# (SIDs: S-1-5-18 SYSTEM, S-1-5-32-544 Administrators, S-1-5-32-545 Users)
+Write-Host "Securing installation directory..."
+
+icacls.exe $InstallDir /setowner "*S-1-5-32-544" /T /C /Q | Out-Null
+icacls.exe $InstallDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" /Q | Out-Null
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to secure $InstallDir. Exit code: $LASTEXITCODE"
+}
+
+# Existing files go back to inheriting the folder ACL
+# (config.json keeps its own, stricter ACL).
+Get-ChildItem -Path $InstallDir -Force |
+    Where-Object { $_.Name -ne "config.json" } |
+    ForEach-Object { icacls.exe $_.FullName /reset /T /C /Q | Out-Null }
+
 # --------------------------------------------------
 # DOWNLOAD VERSION
 # --------------------------------------------------

@@ -63,7 +63,23 @@ reuses the existing `config.json` or asks for the token; leaving it empty keeps 
 agent local-only (status.json only).
 
 The agent logs to `C:\ProgramData\PhotoboothAgent\logs\agent.log`
-(`Remote heartbeat sent` / `Remote heartbeat error: ...`).
+(`Remote heartbeat sent` / `Remote heartbeat error: ...`), rotated at 5 MB.
+
+The install folder is writable only by SYSTEM and Administrators (the agent runs as
+SYSTEM, so a user-writable script would be a privilege escalation).
+
+## Releasing a new agent version
+
+The agent updates itself: every 5 minutes it compares `VERSION` on `main` with its own,
+downloads `agent/agent.ps1` from that exact commit, checks it parses, replaces itself and
+restarts (no reboot, no installer). So for every agent change:
+
+1. Bump `VERSION` (e.g. `1.4.0` → `1.5.0`) in the same commit as the agent change.
+2. Push to `main`. Booths pick it up within ~5 minutes; the dashboard shows each
+   booth's agent version.
+
+Anyone who can push to `main` controls the code run as SYSTEM on every booth: keep
+push access restricted.
 
 ## API
 
