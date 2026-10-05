@@ -127,3 +127,13 @@ the link" (id in `api/fonts.js`). `/api/fonts` lists it (sub-folders included,
 installs it for all users (`C:\Windows\Fonts` + HKLM registry), at startup and every
 hour. Add a font to the folder and every booth gets it. Apps already running (e.g.
 dslrBooth) only see new fonts after a restart.
+
+### Printer drivers
+
+`lib/printer-alerts.js` (`PRINTER_DRIVERS`) lists the printer drivers each booth type
+needs (Signature: DNP DP-DS620). A booth missing one downloads the vendor zip from
+Google Drive, and installs it with `pnputil` only if the zip's SHA-256 is the expected
+one and its catalog is validly signed by the vendor; the dashboard shows the result.
+To ship a new driver version, upload the zip and update its Drive id and SHA-256.
+The Citizen CZ-01 driver (Cinebooth 150) is an unsigned InstallShield setup and is
+not installed automatically.

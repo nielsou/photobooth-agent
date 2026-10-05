@@ -486,6 +486,7 @@ function Get-AgentStatus {
         network           = $Network
         arduino           = $Arduino
         fonts             = $FontsStatus
+        drivers           = $DriversStatus
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
@@ -683,6 +684,15 @@ function Update-BoothConfig {
     }
 
     $script:PrinterAlerts = $Alerts
+
+    $Drivers = @($Body.drivers | Where-Object { $_ })
+    if ($Drivers.Count -gt 0) {
+        ConvertTo-Json -InputObject $Drivers -Depth 5 | Set-Content -Path $DriversConfigFile -Encoding UTF8
+    }
+    else {
+        Remove-Item $DriversConfigFile -Force -ErrorAction SilentlyContinue
+    }
+    $script:DriversConfig = $Drivers
     $script:DnpCodeLabels = $Body.dnpCodes
     $script:BoothConfigEtag = $Response.Headers["ETag"]
     Write-Log "Booth config updated (type: $($Body.type), alerts: $(($Alerts | ForEach-Object { $_.id }) -join ', '))"
@@ -981,6 +991,87 @@ function Install-Fonts {
 }
 
 # --------------------------------------------------
+# PRINTER DRIVERS
+# --------------------------------------------------
+
+# Printer drivers this booth type needs (from booth-config). A missing one is
+# installed from its zip, only if the zip's SHA-256 is the expected one and
+# the driver catalog signature is valid. Checked at startup and every hour.
+$DriversConfigFile = "$AgentDir\drivers-config.json"
+$DriversConfig = @()
+$DriversStatus = @()
+
+if (Test-Path $DriversConfigFile) {
+    try { $DriversConfig = @(Get-Content $DriversConfigFile -Raw | ConvertFrom-Json) } catch { }
+}
+
+function Install-PrinterDrivers {
+
+    $Results = @()
+
+    foreach ($Driver in @($script:DriversConfig | Where-Object { $_ -and $_.printerDriverName })) {
+
+        $Result = [ordered]@{ name = $Driver.printerDriverName; installed = $false; error = $null }
+
+        try {
+            if (Get-PrinterDriver -Name $Driver.printerDriverName -ErrorAction SilentlyContinue) {
+                $Result.installed = $true
+                $Results += [PSCustomObject]$Result
+                continue
+            }
+
+            $Work = "$AgentDir\drivers\$($Driver.id)"
+            $Zip = "$Work.zip"
+            New-Item -ItemType Directory -Path "$AgentDir\drivers" -Force | Out-Null
+
+            Write-Log "Driver $($Driver.printerDriverName) missing: downloading"
+            Invoke-WebRequest -Uri $Driver.url -OutFile $Zip -TimeoutSec 600 -UseBasicParsing -ErrorAction Stop
+
+            $Hash = (Get-FileHash -Path $Zip -Algorithm SHA256).Hash
+            if ($Hash -ne $Driver.sha256) {
+                throw "zip fingerprint mismatch ($Hash), refused"
+            }
+
+            Remove-Item $Work -Recurse -Force -ErrorAction SilentlyContinue
+            Expand-Archive -Path $Zip -DestinationPath $Work -Force
+
+            $Inf = Join-Path $Work $Driver.inf
+            if (-not (Test-Path $Inf)) { throw "driver file not found in zip: $($Driver.inf)" }
+
+            # Every catalog of the package must be validly signed by the vendor.
+            foreach ($Cat in Get-ChildItem -Path (Split-Path $Inf) -Filter *.cat -File) {
+                $Signature = Get-AuthenticodeSignature -FilePath $Cat.FullName
+                if ($Signature.Status -ne "Valid" -or $Signature.SignerCertificate.Subject -notmatch [regex]::Escape($Driver.signer)) {
+                    throw "invalid signature on $($Cat.Name): $($Signature.Status) $($Signature.SignerCertificate.Subject)"
+                }
+            }
+
+            $Output = & pnputil.exe /add-driver "$Inf" /install 2>&1
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) {
+                throw "pnputil failed ($LASTEXITCODE): $(($Output | Select-Object -Last 3) -join ' ')"
+            }
+
+            # Make the print driver available to the spooler (queue created
+            # automatically by Windows when the printer is plugged in).
+            Add-PrinterDriver -Name $Driver.printerDriverName -ErrorAction Stop
+
+            $Result.installed = $true
+            Write-Log "Driver $($Driver.printerDriverName) installed"
+
+            Remove-Item $Work, $Zip -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            $Result.error = $_.Exception.Message
+            Write-Log "Driver $($Driver.printerDriverName) error: $($_.Exception.Message)"
+        }
+
+        $Results += [PSCustomObject]$Result
+    }
+
+    $script:DriversStatus = $Results
+}
+
+# --------------------------------------------------
 # SELF-UPDATE
 # --------------------------------------------------
 
@@ -1104,6 +1195,13 @@ catch {
 }
 
 try {
+    Install-PrinterDrivers
+}
+catch {
+    Write-Log "Drivers error: $($_.Exception.Message)"
+}
+
+try {
     Install-Fonts
     $NextFontsCheck = (Get-Date).AddSeconds($FontsInterval)
 }
@@ -1187,6 +1285,13 @@ while ($true) {
         $NextFontsCheck = (Get-Date).AddSeconds($FontsInterval)
 
         try {
+            Install-PrinterDrivers
+        }
+        catch {
+            Write-Log "Drivers error: $($_.Exception.Message)"
+        }
+
+        try {
             Install-Fonts
         }
         catch {
@@ -1200,7 +1305,9 @@ while ($true) {
         $NextBoothConfigCheck = (Get-Date).AddSeconds($BoothConfigInterval)
 
         try {
+            $DriversBefore = ConvertTo-Json -InputObject @($DriversConfig) -Depth 5 -Compress
             Update-BoothConfig
+            if ((ConvertTo-Json -InputObject @($DriversConfig) -Depth 5 -Compress) -ne $DriversBefore) { Install-PrinterDrivers }
         }
         catch {
             # Retry sooner when the dashboard could not be reached.
