@@ -4,6 +4,15 @@ import { saveBoothStatus } from "../lib/store.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
+// GET /api/heartbeat
+// Authorization: Bearer <AGENT_TOKEN>
+// Lets the installer check the code it was given before saving it.
+export function GET(request) {
+  const auth = checkBearer(request, "AGENT_TOKEN");
+  if (!auth.ok) return json({ error: auth.error }, auth.status);
+  return json({ ok: true });
+}
+
 // POST /api/heartbeat
 // Authorization: Bearer <AGENT_TOKEN>
 // Body: the agent's status.json

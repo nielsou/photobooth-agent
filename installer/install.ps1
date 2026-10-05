@@ -166,20 +166,70 @@ if (-not $AgentToken -and $ExistingConfig) { $AgentToken = $ExistingConfig.agent
 
 if (-not $ApiUrl) { $ApiUrl = $DefaultApiUrl }
 
-if (-not $AgentToken) {
-    Write-Host ""
-    Write-Host "Colle le code d'installation recu par email (clic droit ou Ctrl+V), puis Entree."
-    Write-Host "(Laisser vide = surveillance locale uniquement, sans dashboard.)"
-    $SecureToken = Read-Host "Code d'installation" -AsSecureString
-    $AgentToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken))
+$ApiUrl = "$ApiUrl".Trim().TrimEnd("/")
+$AgentToken = "$AgentToken" -replace '\s', ''
+
+if ($ApiUrl -notmatch "^https://") {
+    throw "ApiUrl must start with https:// (got '$ApiUrl')"
 }
 
-$ApiUrl = "$ApiUrl".Trim().TrimEnd("/")
-$AgentToken = "$AgentToken".Trim()
+# Asks the dashboard whether the code is accepted:
+# $true = valid, $false = rejected, $null = dashboard unreachable.
+function Test-AgentToken {
+    param([string]$Token)
 
-if ($ApiUrl -and $ApiUrl -notmatch "^https://") {
-    throw "ApiUrl must start with https:// (got '$ApiUrl')"
+    try {
+        Invoke-RestMethod `
+            -Uri "$ApiUrl/api/heartbeat" `
+            -Headers @{ Authorization = "Bearer $Token" } `
+            -TimeoutSec 15 `
+            -UseBasicParsing | Out-Null
+
+        return $true
+    }
+    catch {
+        $Response = $_.Exception.Response
+
+        if ($Response -and [int]$Response.StatusCode -eq 401) {
+            return $false
+        }
+
+        Write-Host "WARNING: could not check the code with the dashboard: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+if ($AgentToken -and (Test-AgentToken -Token $AgentToken) -eq $false) {
+    Write-Host "Le code d'installation enregistre est refuse par le dashboard."
+    $AgentToken = ""
+}
+
+$Attempts = 0
+
+while (-not $AgentToken -and $Attempts -lt 3) {
+
+    $Attempts++
+
+    Write-Host ""
+    Write-Host "Colle le code d'installation recu par email (clic droit pour coller), puis Entree."
+    Write-Host "(Laisser vide = surveillance locale uniquement, sans dashboard.)"
+
+    $SecureToken = Read-Host "Code d'installation" -AsSecureString
+    $Entered = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken))
+    $Entered = "$Entered" -replace '\s', ''
+
+    if (-not $Entered) {
+        break
+    }
+
+    if ((Test-AgentToken -Token $Entered) -eq $false) {
+        Write-Host "Code incorrect ($($Entered.Length) caracteres recus, 64 attendus). Reessaie."
+        continue
+    }
+
+    $AgentToken = $Entered
+    Write-Host "Code d'installation accepte."
 }
 
 if ($ApiUrl -and $AgentToken) {
@@ -201,6 +251,8 @@ if ($ApiUrl -and $AgentToken) {
     Write-Host "Heartbeat will be sent to $ApiUrl"
 }
 else {
+    # Do not leave a rejected code behind: the agent would keep being refused.
+    Remove-Item -Path $ConfigFile -Force -ErrorAction SilentlyContinue
     Write-Host "No dashboard configured: status will only be written locally."
 }
 
