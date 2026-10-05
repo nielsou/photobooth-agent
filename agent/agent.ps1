@@ -487,6 +487,7 @@ function Get-AgentStatus {
         arduino           = $Arduino
         fonts             = $FontsStatus
         drivers           = $DriversStatus
+        startScreenVideo  = $StartScreenStatus
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
@@ -684,6 +685,7 @@ function Update-BoothConfig {
 
     $script:PrinterAlerts = $Alerts
     $script:BoothType = $Body.type
+    $script:StartScreenVideo = $Body.startScreenVideo
 
     $Drivers = @($Body.drivers | Where-Object { $_ })
     if ($Drivers.Count -gt 0) {
@@ -1090,6 +1092,111 @@ function Install-PrinterDrivers {
 }
 
 # --------------------------------------------------
+# WELCOME VIDEO
+# --------------------------------------------------
+
+# Welcome ("touch to start") video from booth-config, put where the booth
+# software looks for it: LumaBooth if installed, dslrBooth otherwise. Kept in
+# a local cache so a software update wiping the file is fixed at the next
+# power-on without downloading it again. Refused unless the SHA-256 matches.
+$StartScreenVideo = $null
+$StartScreenStatus = $null
+$UsersRoot = Split-Path $env:PUBLIC
+
+function Get-StartScreenTargets {
+
+    # LumaBooth: <Program Files>\<Luma...>\content\VirtualAttendant\Audio - American Female
+    $Luma = @(
+        foreach ($Root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ -and (Test-Path $_) }) {
+            Get-ChildItem -Path $Root -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'luma' } |
+                ForEach-Object { Join-Path $_.FullName "content\VirtualAttendant\Audio - American Female" } |
+                Where-Object { Test-Path $_ }
+        }
+    )
+
+    if ($Luma.Count -gt 0) {
+        return @($Luma | ForEach-Object { [PSCustomObject]@{ app = "LumaBooth"; path = (Join-Path $_ "photoboothparisvideo.mp4") } })
+    }
+
+    # dslrBooth: each user profile that has dslrBooth assets. The asset id is
+    # the part of the file name before the first "-": keep an existing
+    # photoboothparis-*.mp4 name, otherwise use the usual one.
+    return @(
+        foreach ($UserDir in Get-ChildItem -Path $UsersRoot -Directory -ErrorAction SilentlyContinue) {
+            $Assets = Join-Path $UserDir.FullName "AppData\Roaming\dslrBooth\Assets"
+            if (-not (Test-Path $Assets)) { continue }
+
+            $Folder = Join-Path $Assets "VirtualAttendant"
+            $Existing = Get-ChildItem -Path $Folder -Filter "photoboothparis-*.mp4" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            $Name = if ($Existing) { $Existing.Name } else { "photoboothparis-ONETOUCH 3.0.mp4" }
+
+            [PSCustomObject]@{ app = "dslrBooth"; path = (Join-Path $Folder $Name) }
+        }
+    )
+}
+
+function Install-StartScreenVideo {
+
+    $Video = $script:StartScreenVideo
+    if (-not $Video -or -not $Video.url) { return }
+
+    $Targets = @(Get-StartScreenTargets)
+    $Results = @()
+
+    if ($Targets.Count -gt 0) {
+
+        $Cache = "$AgentDir\media\startscreen.mp4"
+        New-Item -ItemType Directory -Path (Split-Path $Cache) -Force | Out-Null
+
+        $CacheOk = (Test-Path $Cache) -and (Get-FileHash -Path $Cache -Algorithm SHA256).Hash -eq $Video.sha256
+
+        if (-not $CacheOk) {
+            Write-Log "Welcome video: downloading"
+            Invoke-WebRequest -Uri $Video.url -OutFile "$Cache.new" -TimeoutSec 600 -UseBasicParsing -ErrorAction Stop
+
+            $Hash = (Get-FileHash -Path "$Cache.new" -Algorithm SHA256).Hash
+            if ($Hash -ne $Video.sha256) {
+                Remove-Item "$Cache.new" -Force -ErrorAction SilentlyContinue
+                throw "welcome video fingerprint mismatch ($Hash), refused"
+            }
+
+            Move-Item -Path "$Cache.new" -Destination $Cache -Force
+        }
+
+        foreach ($Target in $Targets) {
+            $Result = [ordered]@{ app = $Target.app; path = $Target.path; ok = $false; error = $null }
+
+            try {
+                $Current = Get-Item -Path $Target.path -ErrorAction SilentlyContinue
+                $UpToDate = $Current -and $Current.Length -eq $Video.size -and
+                    (Get-FileHash -Path $Target.path -Algorithm SHA256).Hash -eq $Video.sha256
+
+                if (-not $UpToDate) {
+                    New-Item -ItemType Directory -Path (Split-Path $Target.path) -Force | Out-Null
+                    Copy-Item -Path $Cache -Destination $Target.path -Force -ErrorAction Stop
+                    Write-Log "Welcome video installed: $($Target.path)"
+                }
+
+                $Result.ok = $true
+            }
+            catch {
+                # e.g. file in use because the booth software is playing it
+                $Result.error = $_.Exception.Message
+                Write-Log "Welcome video error ($($Target.path)): $($_.Exception.Message)"
+            }
+
+            $Results += [PSCustomObject]$Result
+        }
+    }
+
+    $script:StartScreenStatus = [PSCustomObject]@{
+        app     = if ($Targets.Count) { $Targets[0].app } else { $null }
+        targets = $Results
+    }
+}
+
+# --------------------------------------------------
 # SELF-UPDATE
 # --------------------------------------------------
 
@@ -1217,7 +1324,7 @@ catch {
 # dashboard or Drive cannot be reached. A booth without a type in the
 # dashboard keeps checking its config hourly, to pick it up once it is set.
 $BoothType = $null
-$SetupDone = @{ config = $false; drivers = $false; fonts = $false }
+$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false }
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
 
@@ -1235,7 +1342,7 @@ while ($true) {
     $LastLoopTime = Get-Date
 
     if ($Gap -gt 10) {
-        $SetupDone = @{ config = $false; drivers = $false; fonts = $false }
+        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false }
         $NextSetupTry = Get-Date
 
         try {
@@ -1294,7 +1401,7 @@ while ($true) {
         }
     }
 
-    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts) -and (Get-Date) -ge $NextSetupTry) {
+    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video) -and (Get-Date) -ge $NextSetupTry) {
 
         $NextSetupTry = (Get-Date).AddMinutes(5)
 
@@ -1315,7 +1422,12 @@ while ($true) {
             catch { Write-Log "Fonts error: $($_.Exception.Message)" }
         }
 
-        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts) {
+        if ($SetupDone.config -and -not $SetupDone.video) {
+            try { Install-StartScreenVideo; $SetupDone.video = $true }
+            catch { Write-Log "Welcome video error: $($_.Exception.Message)" }
+        }
+
+        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video) {
             Write-Log "Booth setup done (type: $BoothType)"
             $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
         }

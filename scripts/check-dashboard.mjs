@@ -60,6 +60,7 @@ const booths = {
         arduino: [{ name: "USB-SERIAL CH340 (COM7)", com: "COM7", usbId: "VID_1A86&PID_7523", present: true, driverMissing: false }],
         fonts: { expected: 23, missing: ["Amarillo.ttf"], checkedAt: now },
         drivers: [{ name: "DP-DS620", installed: true }, { name: "Other", installed: false, error: "boom" }],
+        startScreenVideo: { app: "dslrBooth", targets: [{ app: "dslrBooth", path: "C:/booth/x.mp4", ok: false, error: "in use" }] },
         dnpDevices: [{ statusCode: 1300, mediaRemaining: 12 }],
         printers: [
           printer({ dnp: { mediaRemaining: 12, statusCode: 1300, errors: [] }, queueJobs: 2, oldestJobSeconds: 300,

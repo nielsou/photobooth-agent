@@ -288,6 +288,18 @@ function arduinoCell(boards) {
   }));
 }
 
+// Welcome video put where dslrBooth / LumaBooth expect it (agent >= 1.17.0).
+function videoNote(video) {
+  if (!video) return null;
+  const targets = asList(video.targets);
+  if (targets.length === 0) return el("div", { class: "hint" }, "Vidéo d'accueil : ni dslrBooth ni LumaBooth trouvé");
+  const failed = targets.filter((t) => !t.ok);
+  const title = targets.map((t) => `${t.ok ? "OK" : "ERREUR"} ${t.path}${t.error ? " : " + t.error : ""}`).join(" · ");
+  return failed.length === 0
+    ? el("div", { class: "hint", title }, `Vidéo d'accueil OK (${video.app})`)
+    : el("div", { title }, badge(`Vidéo d'accueil en erreur (${video.app})`, "bad"));
+}
+
 // Printer drivers the booth type needs (agent >= 1.15.0).
 function driversNotes(drivers) {
   return asList(drivers).map((d) => d.installed
@@ -403,7 +415,7 @@ function boothRow(booth) {
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
-    el("td", { class: "nowrap" }, s.agentVersion || "?", fontsNote(s.fonts), ...driversNotes(s.drivers)),
+    el("td", { class: "nowrap" }, s.agentVersion || "?", fontsNote(s.fonts), ...driversNotes(s.drivers), videoNote(s.startScreenVideo)),
     el("td", {}, forget),
   );
 }

@@ -150,3 +150,15 @@ Booth config (type, popups), printer drivers and fonts are applied once per powe
 heartbeat. They are retried every 5 min only while the dashboard or Drive cannot be
 reached. A booth without a type keeps checking its config hourly, so assigning its
 type in the dashboard applies right away (popups, drivers).
+
+### Welcome video
+
+`START_SCREEN_VIDEO` (`lib/printer-alerts.js`): the "touch to start" video on Google
+Drive, with its SHA-256. At power-on the agent puts it where the booth software
+expects it: LumaBooth if installed (`Program Files\<Luma...>\content\VirtualAttendant\
+Audio - American Female\photoboothparisvideo.mp4`), dslrBooth otherwise (each user's
+`AppData\Roaming\dslrBooth\Assets\VirtualAttendant\photoboothparis-ONETOUCH 3.0.mp4`,
+asset id `photoboothparis` used by event_generator). It is cached under
+`C:\ProgramData\PhotoboothAgent\media`, so a software update wiping it is fixed at the
+next power-on without downloading again. To change the video: upload it to Drive and
+update its id, SHA-256 and size.

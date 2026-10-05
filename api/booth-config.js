@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
 import { getBoothTypes } from "../lib/store.js";
-import { DNP_CODES, PRINTER_ALERTS, PRINTER_DRIVERS, qrPng } from "../lib/printer-alerts.js";
+import { DNP_CODES, PRINTER_ALERTS, PRINTER_DRIVERS, START_SCREEN_VIDEO, qrPng } from "../lib/printer-alerts.js";
 
 // GET /api/booth-config?id=<boothId>
 // Authorization: Bearer <DASHBOARD_TOKEN>
@@ -34,7 +34,7 @@ export async function GET(request) {
   // Agents 1.9.x only know the paper-out popup.
   const paper = alerts.find((alert) => alert.id === "paper") || null;
 
-  const body = { boothId, type, printerAlerts: alerts, paperOutPopup: paper, dnpCodes: DNP_CODES, drivers: PRINTER_DRIVERS[type] || [] };
+  const body = { boothId, type, printerAlerts: alerts, paperOutPopup: paper, dnpCodes: DNP_CODES, drivers: PRINTER_DRIVERS[type] || [], startScreenVideo: START_SCREEN_VIDEO };
 
   const text = JSON.stringify(body);
   const etag = `"${createHash("sha256").update(text).digest("base64url").slice(0, 22)}"`;
