@@ -158,6 +158,23 @@ function queueView(p, key) {
   return details;
 }
 
+// Prints left on a DNP printer's media (agent >= 1.6.0, DNP over USB only).
+const LOW_MEDIA = 50;
+
+function mediaView(dnp) {
+  if (!dnp) return null;
+
+  const left = dnp.mediaRemaining;
+  const details = [dnp.media && `Média ${dnp.media}`, ...asList(dnp.errors)].filter(Boolean).join(" · ");
+
+  if (left === null || left === undefined) {
+    return el("span", { class: "badge muted", title: details || "Compteur DNP indisponible" }, "Tirages ?");
+  }
+
+  const kind = left === 0 ? "bad" : left < LOW_MEDIA ? "warn" : "ok";
+  return el("span", { class: `badge ${kind}`, title: details }, `${left} tirage${left > 1 ? "s" : ""}`);
+}
+
 function printersCell(boothId, printers) {
   const list = asList(printers).filter((p) => !VIRTUAL_PRINTER.test(p.name || ""));
 
@@ -181,6 +198,7 @@ function printersCell(boothId, printers) {
       ),
       el("div", { class: "printer-line" },
         connection ? el("span", { class: "hint" }, connection) : null,
+        p.connected === false ? null : mediaView(p.dnp),
         p.connected === false ? null : queueView(p, `${boothId}|${p.name}`),
       ),
     );

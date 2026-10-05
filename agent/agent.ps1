@@ -46,6 +46,159 @@ function Write-Log {
 }
 
 # --------------------------------------------------
+# DNP MEDIA COUNTER
+# --------------------------------------------------
+
+# DNP dye-sub printers (DS620, QW410, DS-RX1...) answer read-only "INFO"
+# queries over USB with the DNP "ESC P" protocol (documented by Gutenprint's
+# dnpds40 backend): INFO MQTY gives the number of prints left on the media.
+# Queried at most every $DnpQueryInterval seconds and never while the printer
+# has jobs, so we do not talk to it in the middle of a print.
+$DnpQueryInterval = 60
+$DnpReady = $false
+$DnpCache = @()
+$DnpNextQuery = Get-Date
+
+try {
+    Add-Type -ErrorAction Stop -TypeDefinition @"
+using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class DnpUsb {
+    static Guid UsbPrintGuid = new Guid("28d78fad-5a12-11d1-ae5b-0000f803a8c2");
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct SP_DEVICE_INTERFACE_DATA { public int cbSize; public Guid InterfaceClassGuid; public int Flags; public IntPtr Reserved; }
+
+    [DllImport("setupapi.dll", SetLastError = true)]
+    static extern IntPtr SetupDiGetClassDevs(ref Guid g, IntPtr enumerator, IntPtr hwnd, int flags);
+    [DllImport("setupapi.dll", SetLastError = true)]
+    static extern bool SetupDiEnumDeviceInterfaces(IntPtr set, IntPtr info, ref Guid g, int index, ref SP_DEVICE_INTERFACE_DATA data);
+    [DllImport("setupapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool SetupDiGetDeviceInterfaceDetail(IntPtr set, ref SP_DEVICE_INTERFACE_DATA data, IntPtr detail, int size, out int required, IntPtr info);
+    [DllImport("setupapi.dll")]
+    static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr sec, uint disposition, uint flags, IntPtr template);
+
+    // Present USB printer interfaces, e.g. \\?\usb#vid_1452&pid_9201#serial#{guid}
+    public static List<string> DevicePaths() {
+        var paths = new List<string>();
+        IntPtr set = SetupDiGetClassDevs(ref UsbPrintGuid, IntPtr.Zero, IntPtr.Zero, 0x12);
+        try {
+            var data = new SP_DEVICE_INTERFACE_DATA();
+            data.cbSize = Marshal.SizeOf(data);
+            for (int i = 0; SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref UsbPrintGuid, i, ref data); i++) {
+                int required;
+                SetupDiGetDeviceInterfaceDetail(set, ref data, IntPtr.Zero, 0, out required, IntPtr.Zero);
+                IntPtr detail = Marshal.AllocHGlobal(required);
+                try {
+                    Marshal.WriteInt32(detail, IntPtr.Size == 8 ? 8 : 6);
+                    if (SetupDiGetDeviceInterfaceDetail(set, ref data, detail, required, out required, IntPtr.Zero))
+                        paths.Add(Marshal.PtrToStringUni(new IntPtr(detail.ToInt64() + 4)));
+                } finally { Marshal.FreeHGlobal(detail); }
+            }
+        } finally { SetupDiDestroyDeviceInfoList(set); }
+        return paths;
+    }
+
+    // Sends "ESC P" + arg1 (6) + arg2 (16) + arg3 (8), space padded, and returns
+    // the answer payload (answer = 8 ASCII digits of length + payload).
+    public static string Query(string path, string arg1, string arg2, int timeoutMs) {
+        byte[] cmd = new byte[32];
+        for (int i = 0; i < cmd.Length; i++) cmd[i] = 0x20;
+        cmd[0] = 0x1b; cmd[1] = 0x50;
+        Encoding.ASCII.GetBytes(arg1, 0, Math.Min(arg1.Length, 6), cmd, 2);
+        Encoding.ASCII.GetBytes(arg2, 0, Math.Min(arg2.Length, 16), cmd, 8);
+
+        SafeFileHandle h = CreateFile(path, 0xC0000000, 3, IntPtr.Zero, 3, 0x40000000, IntPtr.Zero);
+        if (h.IsInvalid) throw new IOException("cannot open printer (error " + Marshal.GetLastWin32Error() + ")");
+
+        using (var fs = new FileStream(h, FileAccess.ReadWrite, 4096, true)) {
+            fs.Write(cmd, 0, cmd.Length);
+            fs.Flush();
+
+            var buf = new byte[4096];
+            int got = 0;
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            while (DateTime.UtcNow < deadline) {
+                Task<int> t = fs.ReadAsync(buf, got, buf.Length - got);
+                int left = (int)(deadline - DateTime.UtcNow).TotalMilliseconds;
+                if (left <= 0 || !t.Wait(left)) break;
+                got += t.Result;
+                if (got >= 8) {
+                    int len;
+                    if (int.TryParse(Encoding.ASCII.GetString(buf, 0, 8), out len) && got >= 8 + len)
+                        return Encoding.ASCII.GetString(buf, 8, len);
+                }
+                if (t.Result == 0) System.Threading.Thread.Sleep(50);
+            }
+            throw new TimeoutException("no answer (" + got + " bytes: " + Encoding.ASCII.GetString(buf, 0, got) + ")");
+        }
+    }
+}
+"@
+    $DnpReady = $true
+}
+catch {
+    Write-Log "DNP support unavailable: $($_.Exception.Message)"
+}
+
+function Get-DnpInfo {
+    param([bool]$Busy)
+
+    if (-not $script:DnpReady) { return @() }
+    if ($Busy -or (Get-Date) -lt $script:DnpNextQuery) { return $script:DnpCache }
+
+    $script:DnpNextQuery = (Get-Date).AddSeconds($DnpQueryInterval)
+    $Result = @()
+
+    foreach ($Path in @([DnpUsb]::DevicePaths() | Where-Object { $_ -match 'vid_1452' })) {
+
+        $Raw = [ordered]@{}
+        $Errors = @()
+
+        foreach ($Query in "MQTY", "STATUS", "MEDIA", "SERIAL_NUMBER", "FVER") {
+            try {
+                $Raw[$Query] = [DnpUsb]::Query($Path, "INFO", $Query, 3000)
+            }
+            catch {
+                $Inner = $_.Exception.InnerException
+                $Errors += "$Query : $(if ($Inner) { $Inner.Message } else { $_.Exception.Message })"
+
+                # No answer to the first query: do not wait on the others.
+                if ($Query -eq "MQTY") { break }
+            }
+        }
+
+        # MQTY answers e.g. "MQTY0350" or "0350": keep the trailing number.
+        $Remaining = $null
+        if ("$($Raw['MQTY'])" -match '(\d+)\s*$') {
+            $Remaining = [int]$Matches[1]
+        }
+
+        $Result += [PSCustomObject]@{
+            device         = ($Path -replace '^.*?#(vid_[0-9a-f]{4}&pid_[0-9a-f]{4}).*$', '$1')
+            mediaRemaining = $Remaining
+            media          = $Raw["MEDIA"]
+            printerStatus  = $Raw["STATUS"]
+            serial         = $Raw["SERIAL_NUMBER"]
+            firmware       = $Raw["FVER"]
+            raw            = [PSCustomObject]$Raw
+            errors         = $Errors
+        }
+    }
+
+    $script:DnpCache = $Result
+    return $Result
+}
+
+# --------------------------------------------------
 # COLLECT STATUS
 # --------------------------------------------------
 
@@ -155,10 +308,17 @@ function Get-AgentStatus {
                 }
             )
 
+            $Manufacturer = $null
+            try {
+                $Manufacturer = (Get-PrinterDriver -Name $Printer.DriverName -ErrorAction Stop).Manufacturer
+            }
+            catch { }
+
             $PrinterList += [PSCustomObject]@{
                 name             = $Printer.Name
                 default          = [bool]$Printer.Default
                 driver           = $Printer.DriverName
+                manufacturer     = $Manufacturer
                 port             = $Port
                 connection       = $Connection
                 connected        = $Connected
@@ -176,6 +336,26 @@ function Get-AgentStatus {
         Write-Log "Printer detection error: $($_.Exception.Message)"
     }
 
+    # DNP media counter, attached to the connected DNP queue(s)
+    $DnpDevices = @()
+
+    try {
+        $DnpQueues = @($PrinterList | Where-Object { $_.manufacturer -match 'Dai Nippon' -and $_.connected -ne $false })
+        $Busy = [bool]($DnpQueues | Where-Object { $_.queueJobs -gt 0 -or $_.status -match 'Printing|Busy|Processing|IoActive' })
+
+        $DnpDevices = @(Get-DnpInfo -Busy $Busy)
+
+        # One DNP plugged in (the usual case): it is the one behind the DNP queue(s).
+        if ($DnpDevices.Count -eq 1) {
+            foreach ($Queue in $DnpQueues) {
+                $Queue | Add-Member -NotePropertyName dnp -NotePropertyValue $DnpDevices[0]
+            }
+        }
+    }
+    catch {
+        Write-Log "DNP query error: $($_.Exception.Message)"
+    }
+
     # Status object
     return [PSCustomObject]@{
         boothId           = $BoothId
@@ -185,6 +365,7 @@ function Get-AgentStatus {
         internet          = $Internet
         spooler           = $SpoolerStatus
         printers          = $PrinterList
+        dnpDevices        = $DnpDevices
         heartbeat         = $true
         timestamp         = (Get-Date).ToUniversalTime().ToString("o")
     }
