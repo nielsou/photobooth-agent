@@ -183,3 +183,18 @@ button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
 }
 
 .network { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.tabs[hidden] { display: none; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px; }
+.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+#config { display: grid; gap: 14px; }
+.config-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; }
+.config-card h2 { margin: 0; font-size: 16px; }
+.config-card .table-wrap { border-radius: 8px; }
+.triggers { margin: 0; padding-left: 16px; }
+.popup-title { font-weight: 600; }
+.qr-cell { text-align: center; width: 120px; }
+.qr-cell a { color: var(--accent); text-decoration: none; font-size: 12px; }
+.qr-cell img { display: block; margin: 0 auto 4px; background: #fff; border-radius: 4px; }

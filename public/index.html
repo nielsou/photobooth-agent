@@ -25,7 +25,19 @@
       <button type="submit">Ouvrir</button>
     </form>
 
+    <nav id="tabs" class="tabs" hidden>
+      <button type="button" data-tab="booths">Booths</button>
+      <button type="button" data-tab="config">Configuration</button>
+    </nav>
+
     <p id="error" class="error" hidden></p>
+
+    <section id="view-config" hidden>
+      <p class="hint">Popups affichées sur l'écran du booth selon l'erreur remontée par l'imprimante. Consultation seule : pour modifier, demander une mise à jour du code (lib/printer-alerts.js).</p>
+      <div id="config"></div>
+    </section>
+
+    <section id="view-booths">
     <p id="empty" class="hint" hidden>Aucun booth n'a encore envoyé de heartbeat.</p>
     <div id="fleet" class="table-wrap" hidden>
       <table>
@@ -45,6 +57,7 @@
         <tbody id="booths"></tbody>
       </table>
     </div>
+    </section>
   </main>
 
   <script src="/app.js"></script>

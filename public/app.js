@@ -390,6 +390,8 @@ function showLogin() {
   clearTimeout(timer);
   $("login").hidden = false;
   $("logout").hidden = true;
+  $("tabs").hidden = true;
+  $("view-config").hidden = true;
   $("booths").replaceChildren();
   $("fleet").hidden = true;
   $("empty").hidden = true;
@@ -439,6 +441,10 @@ async function refresh() {
 
     $("login").hidden = true;
     $("logout").hidden = false;
+    if ($("tabs").hidden) {
+      $("tabs").hidden = false;
+      showTab(currentTab);
+    }
     showError("");
     $("summary").textContent = `${online}/${booths.length} en ligne`
       + (troubled ? ` · ${troubled} imprimante${troubled > 1 ? "s" : ""} en défaut` : "");
@@ -474,7 +480,84 @@ $("login").addEventListener("submit", (event) => {
   refresh();
 });
 
+// Tabs: booths table / read-only popup configuration.
+let currentTab = location.hash === "#config" ? "config" : "booths";
+let configLoaded = false;
+
+function showTab(tab) {
+  currentTab = tab;
+  $("view-booths").hidden = tab !== "booths";
+  $("view-config").hidden = tab !== "config";
+  for (const button of document.querySelectorAll("#tabs button")) {
+    button.classList.toggle("active", button.dataset.tab === tab);
+  }
+  try { history.replaceState(null, "", tab === "config" ? "#config" : location.pathname); } catch { /* ignore */ }
+  if (tab === "config" && !configLoaded) loadConfig();
+}
+
+for (const button of document.querySelectorAll("#tabs button")) {
+  button.addEventListener("click", () => showTab(button.dataset.tab));
+}
+
+function triggerLabels(alert) {
+  const labels = asList(alert.codes).map((code) => {
+    const known = DNP_STATUS[code];
+    return `${known ? known[0] : "Code"} (${code})`;
+  });
+  if (alert.whenEmpty) labels.push("0 tirage restant");
+  if (alert.otherErrors) labels.push("Toute autre erreur (code ≥ 1000)");
+  return labels;
+}
+
+function alertRow(alert) {
+  return el("tr", {},
+    el("td", {}, el("ul", { class: "triggers" }, ...triggerLabels(alert).map((label) => el("li", {}, label)))),
+    el("td", {},
+      el("div", { class: "popup-title" }, alert.title),
+      el("div", {}, alert.message),
+      el("div", { class: "hint" }, alert.detail),
+    ),
+    el("td", { class: "qr-cell" },
+      alert.url
+        ? el("a", { href: alert.url, target: "_blank", rel: "noopener noreferrer", title: alert.url },
+            el("img", { src: alert.qrDataUrl, alt: `QR code vers ${alert.url}`, width: 88, height: 88 }),
+            el("div", {}, "Voir la vidéo"))
+        : el("span", { class: "hint" }, "Pas de QR code"),
+    ),
+  );
+}
+
+function typeCard(entry) {
+  const alerts = asList(entry.alerts);
+  const snooze = alerts[0]?.snoozeMinutes;
+
+  return el("article", { class: "config-card" },
+    el("h2", {}, entry.type),
+    entry.note ? el("p", { class: "hint" }, entry.note) : null,
+    alerts.length === 0 ? null : el("div", { class: "table-wrap" },
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "Déclenchée par"), el("th", {}, "Popup à l'écran"), el("th", {}, "QR code"))),
+        el("tbody", {}, ...alerts.map(alertRow)),
+      ),
+    ),
+    alerts.length === 0 ? null : el("p", { class: "hint" },
+      `Bouton OK : masque la popup ${snooze || 1} min. Elle disparaît seule quand l'imprimante est de nouveau prête.`),
+  );
+}
+
+async function loadConfig() {
+  try {
+    const data = await api("/api/printer-alerts");
+    $("config").replaceChildren(...asList(data.types).map(typeCard));
+    configLoaded = true;
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
 $("logout").addEventListener("click", () => {
+  configLoaded = false;
+  $("config").replaceChildren();
   token = "";
   writeToken("");
   showError("");
