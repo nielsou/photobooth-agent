@@ -22,7 +22,7 @@ environment variables and, on each booth, in `C:\ProgramData\PhotoboothAgent\con
 | `agent/agent.ps1` | Windows agent, runs as SYSTEM at startup, heartbeat every 30 s |
 | `installer/install.ps1` | Installs/updates the agent, writes `config.json`, creates the startup task |
 | `VERSION` | Agent version downloaded by the installer |
-| `api/heartbeat.js` | `POST` — receives a booth's `status.json` (auth: `AGENT_TOKEN`) |
+| `api/heartbeat.js` | `POST` — receives a booth's `status.json`; `GET` — checks a code (auth: `DASHBOARD_TOKEN`) |
 | `api/booths.js` | `GET` — latest status of every booth; `DELETE ?id=` — forget a booth (auth: `DASHBOARD_TOKEN`) |
 | `lib/` | Shared code for the API (auth, Redis storage) |
 | `public/` | Static dashboard |
@@ -38,14 +38,10 @@ Already done for project `photobooth-agent` (team "Niels' projects"), kept here 
    Every push to `main` then redeploys automatically.
 2. **Storage** → connect a Redis database to the project (currently `redis-lime-mountain`).
    This adds `REDIS_URL`. Data lives in the hash `photobooth:booths`.
-3. **Settings → Environment Variables**, add (Production, type Sensitive):
-   - `AGENT_TOKEN` — long random string shared by the booths
-   - `DASHBOARD_TOKEN` — long random string you type into the dashboard
-
-   Generate a value in PowerShell:
-   ```powershell
-   $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)
-   ```
+3. **Settings → Environment Variables**, add `DASHBOARD_TOKEN` (Production, type
+   Sensitive): the single password used for the dashboard **and** as the booths'
+   installation code. Dashboard and heartbeat share a per-IP lockout (5 wrong codes,
+   then 1 hour blocked).
 4. Redeploy so the new variables are picked up.
 
 See `.env.example` for the variable names (no values).
@@ -55,12 +51,13 @@ See `.env.example` for the variable names (no values).
 Double-click `installer\install.cmd` on the booth, or run in PowerShell (it elevates itself):
 
 ```powershell
-.\install.ps1 -AgentToken "<AGENT_TOKEN>"
+.\install.ps1 -AgentToken "<dashboard password>"
 ```
 
 `-ApiUrl` defaults to the production dashboard. Without `-AgentToken`, the installer
-reuses the existing `config.json` or asks for the token; leaving it empty keeps the
-agent local-only (status.json only).
+reuses the existing `config.json` or asks for the installation code (the dashboard
+password). Every code is checked with the dashboard before being saved; a stored code
+that is now refused is asked again. Leaving it empty keeps the agent local-only.
 
 The agent logs to `C:\ProgramData\PhotoboothAgent\logs\agent.log`
 (`Remote heartbeat sent` / `Remote heartbeat error: ...`), rotated at 5 MB.
@@ -91,7 +88,7 @@ push access restricted.
 
 ```
 POST /api/heartbeat
-Authorization: Bearer <AGENT_TOKEN>
+Authorization: Bearer <DASHBOARD_TOKEN>
 Content-Type: application/json
 
 { "boothId": "BOOTH-01", "agentVersion": "1.2.0", "internet": true, "spooler": "Running", "printers": [...], "timestamp": "..." }
@@ -105,8 +102,7 @@ Authorization: Bearer <DASHBOARD_TOKEN>
   "booths": [ { "boothId": "BOOTH-01", "receivedAt": "...", "ageSeconds": 12, "online": true, "status": { ... } } ] }
 ```
 
-## Rotating a token
+## Changing the password
 
-- `AGENT_TOKEN`: change it in Vercel, redeploy, then re-run the installer on each booth with
-  `-AgentToken <new value>`.
-- `DASHBOARD_TOKEN`: change it in Vercel and redeploy; the dashboard asks for the new one.
+Change `DASHBOARD_TOKEN` in Vercel and redeploy. The dashboard asks for the new one;
+each booth must re-run the installer (it sees the old code is refused and asks again).

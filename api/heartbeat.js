@@ -1,24 +1,38 @@
-import { checkBearer } from "../lib/auth.js";
+import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
 import { saveBoothStatus } from "../lib/store.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
+// Booths use the same password as the dashboard (one code for humans), so
+// the heartbeat gets the same per-IP lockout against guessing.
+
 // GET /api/heartbeat
-// Authorization: Bearer <AGENT_TOKEN>
+// Authorization: Bearer <DASHBOARD_TOKEN>
 // Lets the installer check the code it was given before saving it.
-export function GET(request) {
-  const auth = checkBearer(request, "AGENT_TOKEN");
-  if (!auth.ok) return json({ error: auth.error }, auth.status);
+export async function GET(request) {
+  try {
+    const denied = await authorizeDashboard(request);
+    if (denied) return denied;
+  } catch (error) {
+    console.error(error);
+    return json({ error: "Storage unavailable" }, 503);
+  }
+
   return json({ ok: true });
 }
 
 // POST /api/heartbeat
-// Authorization: Bearer <AGENT_TOKEN>
+// Authorization: Bearer <DASHBOARD_TOKEN>
 // Body: the agent's status.json
 export async function POST(request) {
-  const auth = checkBearer(request, "AGENT_TOKEN");
-  if (!auth.ok) return json({ error: auth.error }, auth.status);
+  try {
+    const denied = await authorizeDashboard(request);
+    if (denied) return denied;
+  } catch (error) {
+    console.error(error);
+    return json({ error: "Storage unavailable" }, 503);
+  }
 
   const raw = await request.text();
 

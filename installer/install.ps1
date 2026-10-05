@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 
 # Usage:
-#   install.ps1 [-AgentToken <AGENT_TOKEN>] [-ApiUrl https://<project>.vercel.app]
+#   install.ps1 [-AgentToken <dashboard password>] [-ApiUrl https://<project>.vercel.app]
 # Missing values are taken from an existing config.json; the token is otherwise
 # prompted and ApiUrl defaults to the production dashboard.
 # The token is a secret: never commit it, it only lives on the booth.
@@ -211,7 +211,7 @@ while (-not $AgentToken -and $Attempts -lt 3) {
     $Attempts++
 
     Write-Host ""
-    Write-Host "Colle le code d'installation recu par email (clic droit pour coller), puis Entree."
+    Write-Host "Tape le code d'installation (le mot de passe du dashboard), puis Entree."
     Write-Host "(Laisser vide = surveillance locale uniquement, sans dashboard.)"
 
     $SecureToken = Read-Host "Code d'installation" -AsSecureString
@@ -224,7 +224,7 @@ while (-not $AgentToken -and $Attempts -lt 3) {
     }
 
     if ((Test-AgentToken -Token $Entered) -eq $false) {
-        Write-Host "Code incorrect ($($Entered.Length) caracteres recus, 64 attendus). Reessaie."
+        Write-Host "Code incorrect. Reessaie."
         continue
     }
 
