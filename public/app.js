@@ -335,7 +335,7 @@ function mainPrinter(printers) {
     || list[0];
 }
 
-function printerSummary(printers, spooler) {
+function printerSummary(printers, spooler, popupShown) {
   // Windows print service: when it is stopped, nothing prints at all.
   if (spooler && String(spooler).toLowerCase() !== "running") {
     return el("span", { title: `Service d'impression Windows : ${spooler}` }, badge("Spouleur arrêté", "bad"));
@@ -353,7 +353,10 @@ function printerSummary(printers, spooler) {
     || states.find(([l]) => l === "Impression")
     || (p.connected === true ? ["Prête", "ok"] : ["?", "muted"]);
 
-  return el("span", { title: `${p.name}${all ? " — " + all : ""}` }, badge(label, kind));
+  return el("span", { class: "network", title: `${p.name}${all ? " — " + all : ""}` },
+    badge(label, kind),
+    popupShown ? el("span", { class: "hint", title: "Popup « plus de papier » affichée sur l'écran du booth" }, "popup à l'écran") : null,
+  );
 }
 
 function boothRow(booth) {
@@ -366,7 +369,7 @@ function boothRow(booth) {
     el("td", { class: "booth" }, booth.boothId),
     el("td", {}, typeCell(booth)),
     el("td", {}, booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad")),
-    el("td", {}, printerSummary(s.printers, s.spooler)),
+    el("td", {}, printerSummary(s.printers, s.spooler, s.paperOutPopup)),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
     el("td", {}, networkCell(s)),
     el("td", { class: "printers-cell" }, printersCell(booth.boothId, s.printers)),
