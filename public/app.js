@@ -7,6 +7,7 @@ const $ = (id) => document.getElementById(id);
 
 let token = readToken();
 let timer = null;
+let boothTypes = [];
 
 function readToken() {
   try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
@@ -233,6 +234,31 @@ function printersCell(boothId, printers) {
   }));
 }
 
+function typeSelect(booth) {
+  const select = el("select", {
+    class: "type-select",
+    title: "Type de booth",
+    onchange: () => setType(booth.boothId, select.value),
+  },
+    el("option", { value: "" }, "Sans type"),
+    ...boothTypes.map((type) => el("option", { value: type, selected: type === booth.type }, type)),
+  );
+  return select;
+}
+
+async function setType(boothId, type) {
+  try {
+    await api(`/api/booths?id=${encodeURIComponent(boothId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: type || null }),
+    });
+  } catch (error) {
+    showError(error.message);
+  }
+  refresh();
+}
+
 function boothRow(booth) {
   const s = booth.status || {};
   const spoolerOk = String(s.spooler || "").toLowerCase() === "running";
@@ -242,6 +268,7 @@ function boothRow(booth) {
 
   return el("tr", { class: booth.online ? "" : "offline" },
     el("td", { class: "booth" }, booth.boothId),
+    el("td", {}, typeSelect(booth)),
     el("td", {}, booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad")),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
     el("td", {}, s.internet ? badge("OK", "ok") : badge("Coupé", "bad")),
@@ -272,7 +299,7 @@ function showLogin() {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { ...options.headers, Authorization: `Bearer ${token}` },
     cache: "no-store",
   });
 
@@ -293,7 +320,14 @@ async function refresh() {
   if (!token) return showLogin();
 
   try {
+    // Do not rebuild the table while a type list is open.
+    if (document.activeElement?.classList.contains("type-select")) {
+      timer = setTimeout(refresh, REFRESH_MS);
+      return;
+    }
+
     const data = await api("/api/booths");
+    boothTypes = data.boothTypes || [];
     const booths = data.booths || [];
     const online = booths.filter((b) => b.online).length;
     const troubled = booths

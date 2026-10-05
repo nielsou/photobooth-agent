@@ -171,3 +171,13 @@ button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
   .printer-line > .printer-name { flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; }
   .printer-line:empty { display: none; }
 }
+
+.type-select {
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
