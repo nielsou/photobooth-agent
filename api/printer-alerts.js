@@ -1,6 +1,6 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json } from "../lib/http.js";
-import { BOOTH_TYPES, TYPE_NOTES, PRINTER_ALERTS, qrPng } from "../lib/printer-alerts.js";
+import { BOOTH_TYPES, TYPE_NOTES, PRINTER_ALERTS, DNP_CODES, qrPng } from "../lib/printer-alerts.js";
 
 // GET /api/printer-alerts
 // Authorization: Bearer <DASHBOARD_TOKEN>
@@ -28,5 +28,5 @@ export async function GET(request) {
     })),
   );
 
-  return json({ types });
+  return json({ types, dnpCodes: DNP_CODES });
 }

@@ -1,6 +1,6 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
-import { BOOTH_TYPES } from "../lib/printer-alerts.js";
+import { BOOTH_TYPES, DNP_CODES } from "../lib/printer-alerts.js";
 import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType } from "../lib/store.js";
 
 // The agent posts every 30 s; a booth is offline after 3 missed heartbeats.
@@ -42,6 +42,7 @@ export async function GET(request) {
     serverTime: new Date(now).toISOString(),
     offlineAfterSeconds: OFFLINE_AFTER_SECONDS,
     boothTypes: BOOTH_TYPES,
+    dnpCodes: DNP_CODES,
     booths,
   });
 }

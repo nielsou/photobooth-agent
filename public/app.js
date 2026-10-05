@@ -161,26 +161,19 @@ function queueView(p, key) {
   return details;
 }
 
-// DNP "STATUS" codes (agent >= 1.6.1), as listed by Gutenprint's DNP backend.
-const DNP_STATUS = {
-  1: ["Impression", "ok"],
-  500: ["Refroidissement", "muted"],
-  510: ["Refroidissement", "muted"],
-  900: ["Veille", "muted"],
-  1000: ["Capot ouvert", "bad"],
-  1010: ["Bac à chutes absent", "bad"],
-  1100: ["Fin de papier", "bad"],
-  1200: ["Fin de ruban", "bad"],
-  1300: ["Bourrage", "bad"],
-  1400: ["Erreur ruban", "bad"],
-  1500: ["Mauvais papier", "bad"],
-  1600: ["Erreur de données", "bad"],
-};
+// DNP "STATUS" code names, sent by the server (lib/printer-alerts.js).
+let dnpCodes = {};
 
+function dnpLabel(code) {
+  return dnpCodes[code] || `Code ${code}`;
+}
+
+// 1 printing, 500/510/900 normal waiting states, >= 1000 errors.
 function dnpStatus(code) {
   if (!Number.isInteger(code) || code === 0) return null;
-  if (DNP_STATUS[code]) return DNP_STATUS[code];
-  return code >= 1000 ? [`Panne imprimante (code ${code})`, "bad"] : null;
+  if (code === 1) return ["Impression", "ok"];
+  if (code >= 1000) return [`${dnpLabel(code)} (${code})`, "bad"];
+  return [dnpLabel(code), "muted"];
 }
 
 // Prints left on a DNP printer's media (agent >= 1.6.0, DNP over USB only).
@@ -432,6 +425,7 @@ async function refresh() {
 
     const data = await api("/api/booths");
     boothTypes = data.boothTypes || [];
+    dnpCodes = data.dnpCodes || dnpCodes;
     const booths = data.booths || [];
     const online = booths.filter((b) => b.online).length;
     const troubled = booths
@@ -501,8 +495,7 @@ for (const button of document.querySelectorAll("#tabs button")) {
 
 function triggerLabels(alert) {
   const labels = asList(alert.codes).map((code) => {
-    const known = DNP_STATUS[code];
-    return `${known ? known[0] : "Code"} (${code})`;
+    return `${dnpLabel(code)} (${code})`;
   });
   if (alert.whenEmpty) labels.push("0 tirage restant");
   if (alert.otherErrors) labels.push("Toute autre erreur (code ≥ 1000)");
@@ -547,6 +540,7 @@ function typeCard(entry) {
 async function loadConfig() {
   try {
     const data = await api("/api/printer-alerts");
+    dnpCodes = data.dnpCodes || dnpCodes;
     $("config").replaceChildren(...asList(data.types).map(typeCard));
     configLoaded = true;
   } catch (error) {
