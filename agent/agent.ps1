@@ -289,6 +289,35 @@ function Get-AgentStatus {
         Write-Log "Network detection error: $($_.Exception.Message)"
     }
 
+    # Arduino boards (USB serial): genuine Arduino (2341, 2A03), CH340 clones
+    # (1A86), FTDI (0403), CP210x (10C4), SparkFun (1B4F), Adafruit (239A).
+    # The COM port number matters to the booth software. A board plugged in
+    # without its driver has no COM port ("driverMissing").
+    $Arduino = @()
+
+    try {
+        $Arduino = @(Get-PnpDevice -ErrorAction Stop |
+            Where-Object {
+                $_.InstanceId -match '^USB\\VID_(1A86|2341|2A03|0403|10C4|1B4F|239A)&' -and
+                ($_.Class -eq "Ports" -or ($_.Present -and "$($_.Status)" -eq "Error"))
+            } |
+            ForEach-Object {
+                $Com = $null
+                if ("$($_.FriendlyName)" -match '\((COM\d+)\)') { $Com = $Matches[1] }
+
+                [PSCustomObject]@{
+                    name          = $_.FriendlyName
+                    com           = $Com
+                    usbId         = ($_.InstanceId -replace '^USB\\(VID_[0-9A-F]{4}&PID_[0-9A-F]{4}).*$', '$1')
+                    present       = [bool]$_.Present
+                    driverMissing = ($_.Class -ne "Ports")
+                }
+            })
+    }
+    catch {
+        Write-Log "Arduino detection error: $($_.Exception.Message)"
+    }
+
     # Spooler
     $SpoolerStatus = "Unknown"
 
@@ -455,6 +484,7 @@ function Get-AgentStatus {
         powershellVersion = $PSVersionTable.PSVersion.ToString()
         internet          = $Internet
         network           = $Network
+        arduino           = $Arduino
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices

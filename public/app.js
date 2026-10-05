@@ -265,6 +265,30 @@ Ce choix ne pourra plus être modifié dans le dashboard.`)) {
   refresh();
 }
 
+// Arduino boards seen as USB serial ports (agent >= 1.13.0). The COM number
+// matters to the booth software; without its driver a board has no COM port.
+function arduinoCell(boards) {
+  if (boards === undefined) return el("span", { class: "hint" }, "?");
+
+  const list = asList(boards);
+  const plugged = list.filter((b) => b.present);
+  const title = list.map((b) => `${b.name || "?"} (${b.usbId || "?"})${b.present ? "" : " - débranchée"}`).join(" · ");
+
+  if (plugged.length) {
+    return el("span", { class: "network", title },
+      ...plugged.map((b) => b.driverMissing
+        ? badge("Pilote manquant", "bad")
+        : badge(b.com || "COM ?", b.com ? "ok" : "warn")));
+  }
+
+  if (list.length) {
+    const coms = [...new Set(list.map((b) => b.com).filter(Boolean))].join(", ");
+    return el("span", { title }, badge(coms ? `Débranchée (${coms})` : "Débranchée", "warn"));
+  }
+
+  return el("span", { class: "hint", title: "Aucune carte Arduino vue par Windows" }, "Aucune");
+}
+
 // Network used to reach the internet (agent >= 1.7.0).
 const NETWORK_TYPES = { ethernet: "Câble", wifi: "Wi-Fi", cellular: "4G/5G", other: "Autre" };
 
@@ -358,6 +382,7 @@ function boothRow(booth) {
       state,
       el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
     el("td", {}, networkCell(s)),
+    el("td", {}, arduinoCell(s.arduino)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
