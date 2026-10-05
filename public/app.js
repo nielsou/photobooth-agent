@@ -335,7 +335,12 @@ function mainPrinter(printers) {
     || list[0];
 }
 
-function printerSummary(printers) {
+function printerSummary(printers, spooler) {
+  // Windows print service: when it is stopped, nothing prints at all.
+  if (spooler && String(spooler).toLowerCase() !== "running") {
+    return el("span", { title: `Service d'impression Windows : ${spooler}` }, badge("Spouleur arrêté", "bad"));
+  }
+
   const p = mainPrinter(printers);
   if (!p) return el("span", { class: "hint" }, "Aucune");
 
@@ -353,7 +358,6 @@ function printerSummary(printers) {
 
 function boothRow(booth) {
   const s = booth.status || {};
-  const spoolerOk = String(s.spooler || "").toLowerCase() === "running";
 
   const forget = booth.online ? null :
     el("button", { type: "button", class: "small", onclick: () => forgetBooth(booth.boothId) }, "Retirer");
@@ -362,10 +366,9 @@ function boothRow(booth) {
     el("td", { class: "booth" }, booth.boothId),
     el("td", {}, typeCell(booth)),
     el("td", {}, booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad")),
-    el("td", {}, printerSummary(s.printers)),
+    el("td", {}, printerSummary(s.printers, s.spooler)),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
     el("td", {}, networkCell(s)),
-    el("td", {}, badge(spoolerOk ? "OK" : s.spooler || "?", spoolerOk ? "ok" : "bad")),
     el("td", { class: "printers-cell" }, printersCell(booth.boothId, s.printers)),
     el("td", { class: "nowrap" }, s.agentVersion || "?"),
     el("td", {}, forget),
