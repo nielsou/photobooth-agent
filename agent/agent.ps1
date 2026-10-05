@@ -446,6 +446,7 @@ function Get-AgentStatus {
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
         paperOutPopup     = (Test-Path "$AgentDir\alert.json")
+        popupHelper       = "$((Get-ScheduledTask -TaskName 'Photobooth Agent Popup' -ErrorAction SilentlyContinue).State)"
         heartbeat         = $true
         timestamp         = (Get-Date).ToUniversalTime().ToString("o")
     }
@@ -605,6 +606,74 @@ function Update-BoothConfig {
     Write-Log "Booth config updated (type: $($Body.type), popup: $([bool]$Popup))"
 }
 
+# The popup helper must run in the user's session (this agent runs in the
+# invisible session 0). Running as SYSTEM, the agent sets it up itself, so
+# booths installed before the popup existed need no reinstall.
+$PopupTaskName = "Photobooth Agent Popup"
+
+function Start-PopupHelper {
+    $Task = Get-ScheduledTask -TaskName $PopupTaskName -ErrorAction SilentlyContinue
+
+    if ($Task -and $Task.State -ne "Running") {
+        Start-ScheduledTask -TaskName $PopupTaskName -ErrorAction Stop
+        Write-Log "Popup helper started"
+    }
+}
+
+function Install-PopupHelper {
+
+    $Script = "$AgentDir\popup.ps1"
+
+    if (-not (Test-Path $Script)) {
+        $New = "$Script.new"
+
+        Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/$Repo/main/agent/popup.ps1" `
+            -OutFile $New `
+            -TimeoutSec 30 `
+            -UseBasicParsing `
+            -ErrorAction Stop
+
+        $ParseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($New, [ref]$null, [ref]$ParseErrors) | Out-Null
+
+        if ($ParseErrors) {
+            Remove-Item $New -Force -ErrorAction SilentlyContinue
+            throw "Downloaded popup.ps1 is invalid"
+        }
+
+        Move-Item -Path $New -Destination $Script -Force -ErrorAction Stop
+        Write-Log "Popup helper downloaded"
+    }
+
+    if (-not (Get-ScheduledTask -TaskName $PopupTaskName -ErrorAction SilentlyContinue)) {
+
+        # Same task as the installer creates: any member of Users, at logon.
+        $Action = New-ScheduledTaskAction `
+            -Execute "powershell.exe" `
+            -Argument "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Script`""
+        $Trigger = New-ScheduledTaskTrigger -AtLogOn
+        $Principal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
+        $Settings = New-ScheduledTaskSettingsSet `
+            -ExecutionTimeLimit ([TimeSpan]::Zero) `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries `
+            -MultipleInstances IgnoreNew
+
+        Register-ScheduledTask `
+            -TaskName $PopupTaskName `
+            -Action $Action `
+            -Trigger $Trigger `
+            -Principal $Principal `
+            -Settings $Settings `
+            -ErrorAction Stop | Out-Null
+
+        Write-Log "Popup task created"
+    }
+
+    Start-PopupHelper
+}
+
 # Writes alert.json while a DNP reports paper/ribbon end (1100/1200) or no
 # prints left, removes it once the printer is fine again.
 function Update-PaperAlert {
@@ -620,6 +689,9 @@ function Update-PaperAlert {
             $script:PopupConfig.PSObject.Properties | ForEach-Object { $Alert[$_.Name] = $_.Value }
             [PSCustomObject]$Alert | ConvertTo-Json | Set-Content -Path $AlertFile -Encoding UTF8
             Write-Log "Paper-out popup shown"
+
+            # Make sure someone is there to display it.
+            try { Start-PopupHelper } catch { Write-Log "Popup helper start error: $($_.Exception.Message)" }
         }
     }
     elseif (Test-Path $AlertFile) {
@@ -742,6 +814,13 @@ try {
 }
 catch {
     Write-Log "Startup purge error: $($_.Exception.Message)"
+}
+
+try {
+    Install-PopupHelper
+}
+catch {
+    Write-Log "Popup helper setup error: $($_.Exception.Message)"
 }
 
 # With Fast Startup, "Shut down" hibernates the system and this process just

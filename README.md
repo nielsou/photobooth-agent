@@ -75,7 +75,9 @@ the agent writes `alert.json`; `popup.ps1`, started at every logon by the
 "Photobooth Agent Popup" task in the user's session, shows a fullscreen,
 always-on-top popup over dslrBooth ("Appelez votre référent événement" + QR code
 to the procedure video). "OK" hides it for `snoozeMinutes`; it disappears once
-the printer is fine again. Texts, link and snooze live in `api/booth-config.js`
+the printer is fine again. The agent (SYSTEM) creates the task and downloads
+`popup.ps1` itself when they are missing, and restarts the helper if needed.
+Texts, link and snooze live in `api/booth-config.js`
 per booth type (only Signature for now); the agent fetches them hourly (ETag/304).
 
 The install folder is writable only by SYSTEM and Administrators (the agent runs as
