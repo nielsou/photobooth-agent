@@ -192,6 +192,10 @@ function mediaView(dnp) {
   const details = [dnp.media && `Média ${dnp.media}`, ...asList(dnp.errors)].filter(Boolean).join(" · ");
 
   if (left === null || left === undefined) {
+    // The printer is plugged in but did not answer the agent's query.
+    if (asList(dnp.errors).length > 0) {
+      return el("span", { class: "badge bad", title: details }, "Ne répond pas");
+    }
     return el("span", { class: "badge muted", title: details || "Compteur DNP indisponible" }, "Tirages ?");
   }
 
