@@ -335,6 +335,9 @@ function mainPrinter(printers) {
     || list[0];
 }
 
+// Printer alert popups shown on the booth screen (agent >= 1.10.0).
+const POPUP_LABELS = { paper: "Plus de papier", jam: "Bourrage", open: "Imprimante ouverte", error: "Problème d'imprimante" };
+
 function printerSummary(printers, spooler, popupShown) {
   // Windows print service: when it is stopped, nothing prints at all.
   if (spooler && String(spooler).toLowerCase() !== "running") {
@@ -355,7 +358,7 @@ function printerSummary(printers, spooler, popupShown) {
 
   return el("span", { class: "network", title: `${p.name}${all ? " — " + all : ""}` },
     badge(label, kind),
-    popupShown ? el("span", { class: "hint", title: "Popup « plus de papier » affichée sur l'écran du booth" }, "popup à l'écran") : null,
+    popupShown ? el("span", { class: "hint", title: "Popup affichée sur l'écran du booth" }, `popup « ${POPUP_LABELS[popupShown] || popupShown} » à l'écran`) : null,
   );
 }
 
@@ -369,7 +372,7 @@ function boothRow(booth) {
     el("td", { class: "booth" }, booth.boothId),
     el("td", {}, typeCell(booth)),
     el("td", {}, booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad")),
-    el("td", {}, printerSummary(s.printers, s.spooler, s.paperOutPopup)),
+    el("td", {}, printerSummary(s.printers, s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null))),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
     el("td", {}, networkCell(s)),
     el("td", { class: "printers-cell" }, printersCell(booth.boothId, s.printers)),

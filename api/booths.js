@@ -6,7 +6,7 @@ import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType } from "
 const OFFLINE_AFTER_SECONDS = 90;
 
 // Booth models, assigned in the dashboard as booths come in.
-const BOOTH_TYPES = ["Station mère", "Signature", "Cinebooth 150", "Cinebooth Illimité"];
+const BOOTH_TYPES = ["Station mère", "Signature", "Starbooth Pro", "Cinebooth 150", "Cinebooth Illimité"];
 
 // GET /api/booths
 // Authorization: Bearer <DASHBOARD_TOKEN>
