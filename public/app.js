@@ -234,29 +234,88 @@ function printersCell(boothId, printers) {
   }));
 }
 
-function typeSelect(booth) {
+// Type: chosen once in the dashboard, then read-only.
+function typeCell(booth) {
+  if (booth.type) return el("span", { class: "nowrap" }, booth.type);
+
   const select = el("select", {
     class: "type-select",
-    title: "Type de booth",
-    onchange: () => setType(booth.boothId, select.value),
+    title: "Type de booth (définitif)",
+    onchange: () => setType(booth.boothId, select.value, select),
   },
     el("option", { value: "" }, "Sans type"),
-    ...boothTypes.map((type) => el("option", { value: type, selected: type === booth.type }, type)),
+    ...boothTypes.map((type) => el("option", { value: type }, type)),
   );
   return select;
 }
 
-async function setType(boothId, type) {
+async function setType(boothId, type, select) {
+  if (!type) return;
+
+  if (!confirm(`${boothId} est un « ${type} » ?
+
+Ce choix ne pourra plus être modifié dans le dashboard.`)) {
+    select.value = "";
+    select.blur();
+    return;
+  }
+
   try {
     await api(`/api/booths?id=${encodeURIComponent(boothId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: type || null }),
+      body: JSON.stringify({ type }),
     });
   } catch (error) {
     showError(error.message);
   }
   refresh();
+}
+
+// Network used to reach the internet (agent >= 1.7.0).
+const NETWORK_TYPES = { ethernet: "Câble", wifi: "Wi-Fi", cellular: "4G/5G", other: "Autre" };
+
+function networkCell(s) {
+  const n = s.network;
+
+  if (!n) return s.internet === false ? badge("Pas d'internet", "bad") : el("span", { class: "hint" }, "?");
+
+  const weak = n.type === "wifi" && Number.isFinite(n.signal) && n.signal < 40;
+  const kind = s.internet === false ? "bad" : weak ? "warn" : "ok";
+  const label = NETWORK_TYPES[n.type] || n.type;
+  const title = [n.description, n.linkSpeed, n.signal != null ? `signal ${n.signal} %` : null].filter(Boolean).join(" · ");
+
+  return el("span", { class: "network", title },
+    badge(s.internet === false ? `${label} · pas d'internet` : label, kind),
+    n.name ? el("span", { class: "hint" }, n.name) : null,
+    weak ? el("span", { class: "hint" }, `${n.signal} %`) : null,
+  );
+}
+
+// The booth's main printer: the DNP when there is one, else the default
+// printer, else the first connected one.
+function mainPrinter(printers) {
+  const list = asList(printers).filter((p) => !VIRTUAL_PRINTER.test(p.name || ""));
+  return list.find((p) => p.dnp)
+    || list.find((p) => p.default && p.connected !== false)
+    || list.find((p) => p.connected === true)
+    || list[0];
+}
+
+function printerSummary(printers) {
+  const p = mainPrinter(printers);
+  if (!p) return el("span", { class: "hint" }, "Aucune");
+
+  const states = printerProblems(p);
+  if ((Number(p.oldestJobSeconds) || 0) > STUCK_JOB_SECONDS) states.push(["File bloquée", "bad"]);
+
+  const all = states.map(([label]) => label).join(" · ");
+  const pick = (severity) => states.find(([, s]) => s === severity);
+  const [label, kind] = pick("bad") || pick("warn")
+    || states.find(([l]) => l === "Impression")
+    || (p.connected === true ? ["Prête", "ok"] : ["?", "muted"]);
+
+  return el("span", { title: `${p.name}${all ? " — " + all : ""}` }, badge(label, kind));
 }
 
 function boothRow(booth) {
@@ -268,10 +327,11 @@ function boothRow(booth) {
 
   return el("tr", { class: booth.online ? "" : "offline" },
     el("td", { class: "booth" }, booth.boothId),
-    el("td", {}, typeSelect(booth)),
+    el("td", {}, typeCell(booth)),
     el("td", {}, booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad")),
+    el("td", {}, printerSummary(s.printers)),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
-    el("td", {}, s.internet ? badge("OK", "ok") : badge("Coupé", "bad")),
+    el("td", {}, networkCell(s)),
     el("td", {}, badge(spoolerOk ? "OK" : s.spooler || "?", spoolerOk ? "ok" : "bad")),
     el("td", { class: "printers-cell" }, printersCell(booth.boothId, s.printers)),
     el("td", { class: "nowrap" }, s.agentVersion || "?"),

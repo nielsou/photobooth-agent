@@ -181,3 +181,5 @@ button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
   background: var(--surface);
   color: var(--text);
 }
+
+.network { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }

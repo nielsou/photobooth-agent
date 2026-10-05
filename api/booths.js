@@ -1,6 +1,6 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
-import { listBoothStatuses, deleteBooth, getBoothTypes, setBoothType } from "../lib/store.js";
+import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType } from "../lib/store.js";
 
 // The agent posts every 30 s; a booth is offline after 3 missed heartbeats.
 const OFFLINE_AFTER_SECONDS = 90;
@@ -68,8 +68,10 @@ export async function DELETE(request) {
   }
 }
 
-// PATCH /api/booths?id=<boothId>  body: { "type": "Signature" | null }
+// PATCH /api/booths?id=<boothId>  body: { "type": "Signature" }
 // Authorization: Bearer <DASHBOARD_TOKEN>
+// Assigns a type to a booth that has none. Once set, it cannot be changed
+// from the dashboard (fix mistakes directly in Redis).
 export async function PATCH(request) {
   const boothId = new URL(request.url).searchParams.get("id") || "";
 
@@ -82,13 +84,16 @@ export async function PATCH(request) {
     }
 
     const body = await request.json().catch(() => null);
-    const type = body?.type || null;
+    const type = body?.type;
 
-    if (type !== null && !BOOTH_TYPES.includes(type)) {
+    if (!BOOTH_TYPES.includes(type)) {
       return json({ error: "Unknown booth type", boothTypes: BOOTH_TYPES }, 400);
     }
 
-    await setBoothType(boothId, type);
+    if (!(await assignBoothType(boothId, type))) {
+      return json({ error: "Ce booth a déjà un type, il ne peut plus être modifié." }, 409);
+    }
+
     return json({ ok: true, boothId, type });
   } catch (error) {
     console.error(error);

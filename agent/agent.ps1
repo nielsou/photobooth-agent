@@ -234,6 +234,48 @@ function Get-AgentStatus {
         $Internet = $false
     }
 
+    # Network actually used to reach the internet (cable to the 4G router, Wi-Fi...)
+    $Network = $null
+
+    try {
+        $Route = Find-NetRoute -RemoteIPAddress "8.8.8.8" -ErrorAction Stop | Select-Object -First 1
+        $Adapter = Get-NetAdapter -InterfaceIndex $Route.InterfaceIndex -ErrorAction Stop
+        $ConnectionProfile = Get-NetConnectionProfile -InterfaceIndex $Route.InterfaceIndex -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+        $Media = "$($Adapter.PhysicalMediaType) $($Adapter.MediaType) $($Adapter.InterfaceDescription)"
+
+        $Type = if ($Media -match '802\.11|Wireless LAN|Wi-?Fi') { "wifi" }
+            elseif ($Media -match 'Wireless WAN|Mobile Broadband|WWAN') { "cellular" }
+            elseif ($Media -match '802\.3|Ethernet') { "ethernet" }
+            else { "other" }
+
+        $Ssid = $null
+        $Signal = $null
+
+        if ($Type -eq "wifi") {
+            # May be empty on recent Windows without location permission.
+            $Wlan = netsh.exe wlan show interfaces 2>$null
+            $SsidLine = $Wlan | Where-Object { $_ -match '^\s*SSID\s*:\s*(.+)$' } | Select-Object -First 1
+            if ($SsidLine -match '^\s*SSID\s*:\s*(.+)$') { $Ssid = $Matches[1].Trim() }
+            $SignalLine = $Wlan | Where-Object { $_ -match '^\s*Signal\s*:\s*(\d+)\s*%' } | Select-Object -First 1
+            if ($SignalLine -match '(\d+)\s*%') { $Signal = [int]$Matches[1] }
+        }
+
+        $Network = [PSCustomObject]@{
+            type        = $Type
+            adapter     = $Adapter.Name
+            description = $Adapter.InterfaceDescription
+            linkSpeed   = $Adapter.LinkSpeed
+            name        = if ($Ssid) { $Ssid } else { $ConnectionProfile.Name }
+            ssid        = $Ssid
+            signal      = $Signal
+        }
+    }
+    catch {
+        Write-Log "Network detection error: $($_.Exception.Message)"
+    }
+
     # Spooler
     $SpoolerStatus = "Unknown"
 
@@ -386,6 +428,7 @@ function Get-AgentStatus {
         computerName      = $env:COMPUTERNAME
         powershellVersion = $PSVersionTable.PSVersion.ToString()
         internet          = $Internet
+        network           = $Network
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
