@@ -288,6 +288,24 @@ function arduinoCell(boards) {
   }));
 }
 
+// Printer drivers the booth type needs (agent >= 1.15.0).
+function driversNotes(drivers) {
+  return asList(drivers).map((d) => d.installed
+    ? el("div", { class: "hint" }, `Pilote ${d.name} installé`)
+    : el("div", { title: d.error || "" }, badge(`Pilote ${d.name} ${d.error ? "en erreur" : "manquant"}`, d.error ? "bad" : "warn")));
+}
+
+// Fonts from the shared Drive folder (agent >= 1.14.0).
+function fontsNote(fonts) {
+  if (!fonts) return null;
+  const missing = asList(fonts.missing);
+  if (missing.length === 0) {
+    return el("div", { class: "hint", title: `${fonts.expected} polices vérifiées le ${formatDate(fonts.checkedAt)}` }, "Polices à jour");
+  }
+  return el("div", { title: `Non installées : ${missing.join(", ")}` },
+    badge(`${missing.length} police${missing.length > 1 ? "s" : ""} manquante${missing.length > 1 ? "s" : ""}`, "warn"));
+}
+
 // Network used to reach the internet (agent >= 1.7.0).
 const NETWORK_TYPES = { ethernet: "Câble", wifi: "Wi-Fi", cellular: "4G/5G", other: "Autre" };
 

@@ -96,6 +96,11 @@ restarts (no reboot, no installer). So for every agent change:
 Anyone who can push to `main` controls the code run as SYSTEM on every booth: keep
 push access restricted.
 
+## Checks
+
+Before pushing a dashboard change: `node scripts/check-dashboard.mjs` (renders the whole
+dashboard in a fake DOM with realistic data and fails on any runtime error).
+
 ## API
 
 ```
