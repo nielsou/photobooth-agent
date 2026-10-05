@@ -357,7 +357,14 @@ function Get-AgentStatus {
 
     try {
         $DnpQueues = @($PrinterList | Where-Object { $_.manufacturer -match 'Dai Nippon' -and $_.connected -ne $false })
-        $Busy = [bool]($DnpQueues | Where-Object { $_.queueJobs -gt 0 -or $_.status -match 'Printing|Busy|Processing|IoActive' })
+
+        # Do not talk to the printer while a job is being sent to it. A job
+        # stuck for > 2 min (paper end, cover open...) means nothing is being
+        # sent, and that is exactly when we need the printer's error code.
+        $Busy = [bool]($DnpQueues | Where-Object {
+            ($_.queueJobs -gt 0 -and [int]$_.oldestJobSeconds -lt 120) -or
+            ($_.queueJobs -eq 0 -and $_.status -match 'Printing|Busy|Processing|IoActive')
+        })
 
         $DnpDevices = @(Get-DnpInfo -Busy $Busy)
 
