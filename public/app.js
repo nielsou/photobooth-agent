@@ -344,11 +344,18 @@ function boothRow(booth) {
   const forget = booth.online ? null :
     el("button", { type: "button", class: "small", onclick: () => forgetBooth(booth.boothId) }, "Retirer");
 
-  return el("tr", { class: booth.online ? "" : "offline" },
+  // Offline: everything but the state is the last known status, shown grey.
+  const state = booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad");
+  state.classList.add("keep");
+
+  return el("tr", {
+    class: booth.online ? "" : "offline",
+    title: booth.online ? "" : `Hors ligne : dernières infos reçues le ${formatDate(booth.receivedAt)}`,
+  },
     el("td", { class: "booth" }, booth.boothId),
     el("td", {}, typeCell(booth)),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
-      booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad"),
+      state,
       el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
     el("td", {}, networkCell(s)),
     el("td", { class: "printers-cell" },

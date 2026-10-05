@@ -200,3 +200,8 @@ button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
 .qr-cell img { display: block; margin: 0 auto 4px; background: #fff; border-radius: 4px; }
 .tabs button.warn { color: var(--warn); }
 .printer-notes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+
+/* Offline booth: last known status only, everything but its state in grey. */
+tr.offline .badge:not(.keep) { color: var(--muted); background: var(--bg); }
+tr.offline td:not(:first-child) { color: var(--muted); }
+tr.offline .star { color: var(--muted); }
