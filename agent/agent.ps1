@@ -605,7 +605,6 @@ function Send-Heartbeat {
 $AlertFile = "$AgentDir\alert.json"
 $PopupConfigFile = "$AgentDir\popup-config.json"
 $BoothConfigInterval = 3600
-$NextBoothConfigCheck = Get-Date
 $BoothConfigEtag = $null
 $PrinterAlerts = @()
 $DnpCodeLabels = $null
@@ -684,6 +683,7 @@ function Update-BoothConfig {
     }
 
     $script:PrinterAlerts = $Alerts
+    $script:BoothType = $Body.type
 
     $Drivers = @($Body.drivers | Where-Object { $_ })
     if ($Drivers.Count -gt 0) {
@@ -865,8 +865,6 @@ function Update-PrinterAlert {
 # already running only see new fonts once restarted.
 $FontsDir = "$env:WINDIR\Fonts"
 $FontsRegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-$FontsInterval = 3600
-$NextFontsCheck = Get-Date
 $FontsStatus = $null
 
 Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
@@ -1214,21 +1212,14 @@ catch {
     Write-Log "Popup helper setup error: $($_.Exception.Message)"
 }
 
-try {
-    Install-PrinterDrivers
-}
-catch {
-    Write-Log "Drivers error: $($_.Exception.Message)"
-}
-
-try {
-    Install-Fonts
-    $NextFontsCheck = (Get-Date).AddSeconds($FontsInterval)
-}
-catch {
-    $NextFontsCheck = (Get-Date).AddMinutes(5)
-    Write-Log "Fonts error: $($_.Exception.Message)"
-}
+# Booth setup (config, printer drivers, fonts) runs once per power-on, right
+# after the first heartbeat, and is retried every 5 min only while the
+# dashboard or Drive cannot be reached. A booth without a type in the
+# dashboard keeps checking its config hourly, to pick it up once it is set.
+$BoothType = $null
+$SetupDone = @{ config = $false; drivers = $false; fonts = $false }
+$NextSetupTry = Get-Date
+$NextUntypedCheck = Get-Date
 
 # With Fast Startup, "Shut down" hibernates the system and this process just
 # resumes later: a long gap between two loop turns means the PC was off/asleep.
@@ -1244,6 +1235,9 @@ while ($true) {
     $LastLoopTime = Get-Date
 
     if ($Gap -gt 10) {
+        $SetupDone = @{ config = $false; drivers = $false; fonts = $false }
+        $NextSetupTry = Get-Date
+
         try {
             Clear-OldPrintJobs -Reason "resumed after $([int]$Gap) min off/asleep"
         }
@@ -1300,38 +1294,42 @@ while ($true) {
         }
     }
 
-    if ((Get-Date) -ge $NextFontsCheck) {
+    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts) -and (Get-Date) -ge $NextSetupTry) {
 
-        $NextFontsCheck = (Get-Date).AddSeconds($FontsInterval)
+        $NextSetupTry = (Get-Date).AddMinutes(5)
 
-        try {
-            Install-PrinterDrivers
-        }
-        catch {
-            Write-Log "Drivers error: $($_.Exception.Message)"
+        if (-not $SetupDone.config) {
+            try { Update-BoothConfig; $SetupDone.config = $true }
+            catch { Write-Log "Booth config error: $($_.Exception.Message)" }
         }
 
-        try {
-            Install-Fonts
+        # Per-driver / per-font problems are reported, not retried in a loop:
+        # only an unreachable dashboard or Drive (exception) is retried.
+        if ($SetupDone.config -and -not $SetupDone.drivers) {
+            try { Install-PrinterDrivers; $SetupDone.drivers = $true }
+            catch { Write-Log "Drivers error: $($_.Exception.Message)" }
         }
-        catch {
-            $NextFontsCheck = (Get-Date).AddMinutes(5)
-            Write-Log "Fonts error: $($_.Exception.Message)"
+
+        if (-not $SetupDone.fonts) {
+            try { Install-Fonts; $SetupDone.fonts = $true }
+            catch { Write-Log "Fonts error: $($_.Exception.Message)" }
+        }
+
+        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts) {
+            Write-Log "Booth setup done (type: $BoothType)"
+            $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
         }
     }
 
-    if ((Get-Date) -ge $NextBoothConfigCheck) {
+    if ($SetupDone.config -and -not $BoothType -and (Get-Date) -ge $NextUntypedCheck) {
 
-        $NextBoothConfigCheck = (Get-Date).AddSeconds($BoothConfigInterval)
+        $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
 
         try {
-            $DriversBefore = ConvertTo-Json -InputObject @($DriversConfig) -Depth 5 -Compress
             Update-BoothConfig
-            if ((ConvertTo-Json -InputObject @($DriversConfig) -Depth 5 -Compress) -ne $DriversBefore) { Install-PrinterDrivers }
+            if ($BoothType) { Install-PrinterDrivers }
         }
         catch {
-            # Retry sooner when the dashboard could not be reached.
-            $NextBoothConfigCheck = (Get-Date).AddMinutes(5)
             Write-Log "Booth config error: $($_.Exception.Message)"
         }
     }

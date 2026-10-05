@@ -125,7 +125,7 @@ Fonts used by the booth templates live in a Google Drive folder shared "anyone w
 the link" (id in `api/fonts.js`). `/api/fonts` lists it (sub-folders included,
 `.ttf/.otf/.ttc/.zip`); the agent downloads what is missing straight from Google and
 installs it for all users (`C:\Windows\Fonts` + HKLM registry), at startup and every
-hour. Add a font to the folder and every booth gets it. Apps already running (e.g.
+(boot or resume). Add a font to the folder and every booth gets it at its next start. Apps already running (e.g.
 dslrBooth) only see new fonts after a restart.
 
 ### Printer drivers
@@ -137,3 +137,11 @@ one and its catalog is validly signed by the vendor; the dashboard shows the res
 To ship a new driver version, upload the zip and update its Drive id and SHA-256.
 The Citizen CZ-01 driver (Cinebooth 150) is an unsigned InstallShield setup and is
 not installed automatically.
+
+### Booth setup at power-on
+
+Booth config (type, popups), printer drivers and fonts are applied once per power-on
+(Windows startup, or resume after > 10 min off/asleep), right after the first
+heartbeat. They are retried every 5 min only while the dashboard or Drive cannot be
+reached. A booth without a type keeps checking its config hourly, so assigning its
+type in the dashboard applies right away (popups, drivers).
