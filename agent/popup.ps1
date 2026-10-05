@@ -43,7 +43,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
         <Button x:Name="OkButton" Content="OK" FontSize="24" Padding="56,12" HorizontalAlignment="Left"
                 Background="#2F5BEA" Foreground="White" BorderThickness="0" Cursor="Hand"/>
       </StackPanel>
-      <StackPanel Grid.Column="1" VerticalAlignment="Center">
+      <StackPanel x:Name="QrPanel" Grid.Column="1" VerticalAlignment="Center">
         <Image x:Name="QrImage" Width="240" Height="240" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
         <TextBlock x:Name="QrCaptionText" FontSize="16" Foreground="#888780" TextAlignment="Center"
                    TextWrapping="Wrap" MaxWidth="240" Margin="0,10,0,0"/>
@@ -58,7 +58,7 @@ $Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader
 $State = @{
     SnoozedUntil = [datetime]::MinValue
     SnoozeMinutes = 5
-    ShownSince = $null
+    ShownKey = $null
     ScriptTime = (Get-Item $PSCommandPath).LastWriteTimeUtc
 }
 
@@ -81,9 +81,15 @@ function Show-Alert {
         $Bitmap.UriSource = New-Object Uri $QrPath
         $Bitmap.EndInit()
         $Window.FindName("QrImage").Source = $Bitmap
+        $Window.FindName("QrPanel").Visibility = "Visible"
+    }
+    else {
+        # Alert without a procedure video (e.g. other printer errors).
+        $Window.FindName("QrPanel").Visibility = "Collapsed"
     }
 
     if ($Alert.snoozeMinutes) { $State.SnoozeMinutes = [int]$Alert.snoozeMinutes }
+    $State.ShownKey = "$($Alert.id)|$($Alert.since)"
 
     $Window.Show()
     $Window.Activate() | Out-Null
@@ -119,9 +125,17 @@ $Timer.Add_Tick({
         }
 
         if (-not $Alert) {
-            # Paper is back: hide and forget any snooze.
+            # Printer is fine again: hide and forget any snooze.
             $State.SnoozedUntil = [datetime]::MinValue
+            $State.ShownKey = $null
             if ($Window.IsVisible) { $Window.Hide() }
+            return
+        }
+
+        # A different problem (e.g. jam -> open cover): show it right away.
+        if ("$($Alert.id)|$($Alert.since)" -ne $State.ShownKey) {
+            $State.SnoozedUntil = [datetime]::MinValue
+            Show-Alert -Alert $Alert
             return
         }
 

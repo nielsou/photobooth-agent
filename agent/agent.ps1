@@ -434,6 +434,19 @@ function Get-AgentStatus {
         Write-Log "DNP query error: $($_.Exception.Message)"
     }
 
+    # Printer alert popup currently requested, and whether its helper runs
+    $AlertShown = Test-Path "$AgentDir\alert.json"
+    $AlertId = $null
+    $HelperState = $null
+
+    try {
+        if ($AlertShown) { $AlertId = (Get-Content "$AgentDir\alert.json" -Raw | ConvertFrom-Json).id }
+
+        $HelperState = if (Test-PopupHelperRunning) { "Running" }
+            else { "$((Get-ScheduledTask -TaskName 'Photobooth Agent Popup' -ErrorAction SilentlyContinue).State)" }
+    }
+    catch { }
+
     # Status object
     return [PSCustomObject]@{
         boothId           = $BoothId
@@ -445,8 +458,9 @@ function Get-AgentStatus {
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
-        paperOutPopup     = (Test-Path "$AgentDir\alert.json")
-        popupHelper       = "$((Get-ScheduledTask -TaskName 'Photobooth Agent Popup' -ErrorAction SilentlyContinue).State)"
+        paperOutPopup     = $AlertShown
+        printerAlert      = $AlertId
+        popupHelper       = $HelperState
         heartbeat         = $true
         timestamp         = (Get-Date).ToUniversalTime().ToString("o")
     }
@@ -548,23 +562,42 @@ function Send-Heartbeat {
 }
 
 # --------------------------------------------------
-# PAPER-OUT POPUP
+# PRINTER ALERT POPUPS
 # --------------------------------------------------
 
-# The dashboard tells each booth which popup to show when its DNP runs out of
-# paper or ribbon (only Signature booths get one). Fetched every hour; the
-# server answers 304 when nothing changed. The popup itself is shown by
-# popup.ps1 in the user's session, which watches alert.json.
+# The dashboard tells each booth which popups to show when its DNP printer
+# reports a problem (paper end, jam, open cover...; only Signature booths get
+# them). Fetched every hour; the server answers 304 when nothing changed. The
+# popup itself is shown by popup.ps1 in the user's session, which watches
+# alert.json.
 $AlertFile = "$AgentDir\alert.json"
 $PopupConfigFile = "$AgentDir\popup-config.json"
-$PopupQrFile = "paper-qr.png"
 $BoothConfigInterval = 3600
 $NextBoothConfigCheck = Get-Date
 $BoothConfigEtag = $null
-$PopupConfig = $null
+$PrinterAlerts = @()
+
+# 1.9.x stored a single paper-out popup: read it as the "paper" alert.
+function ConvertTo-PrinterAlerts {
+    param($Config)
+
+    if (-not $Config) { return @() }
+
+    if ($Config.PSObject.Properties["printerAlerts"]) { return @($Config.printerAlerts) }
+
+    if ($Config.PSObject.Properties["title"] -and -not $Config.PSObject.Properties["id"]) {
+        $Config | Add-Member -NotePropertyName id -NotePropertyValue "paper" -Force
+        $Config | Add-Member -NotePropertyName codes -NotePropertyValue @(1100, 1200) -Force
+        $Config | Add-Member -NotePropertyName whenEmpty -NotePropertyValue $true -Force
+        $Config | Add-Member -NotePropertyName qrFile -NotePropertyValue "paper-qr.png" -Force
+        return @($Config)
+    }
+
+    return @()
+}
 
 if (Test-Path $PopupConfigFile) {
-    try { $PopupConfig = Get-Content $PopupConfigFile -Raw | ConvertFrom-Json } catch { }
+    try { $PrinterAlerts = ConvertTo-PrinterAlerts (Get-Content $PopupConfigFile -Raw | ConvertFrom-Json) } catch { }
 }
 
 function Update-BoothConfig {
@@ -590,20 +623,31 @@ function Update-BoothConfig {
     }
 
     $Body = $Response.Content | ConvertFrom-Json
-    $Popup = $Body.paperOutPopup
+    $Alerts = @($Body.printerAlerts | Where-Object { $_ })
 
-    if ($Popup) {
-        [IO.File]::WriteAllBytes("$AgentDir\$PopupQrFile", [Convert]::FromBase64String($Popup.qrPng))
-        $Popup.PSObject.Properties.Remove("qrPng")
-        $Popup | ConvertTo-Json | Set-Content -Path $PopupConfigFile -Encoding UTF8
+    # One QR code image per alert, next to the config (readable by the helper).
+    foreach ($Alert in $Alerts) {
+        $QrFile = $null
+
+        if ($Alert.qrPng) {
+            $QrFile = "alert-qr-$($Alert.id).png"
+            [IO.File]::WriteAllBytes("$AgentDir\$QrFile", [Convert]::FromBase64String($Alert.qrPng))
+        }
+
+        $Alert.PSObject.Properties.Remove("qrPng")
+        $Alert | Add-Member -NotePropertyName qrFile -NotePropertyValue $QrFile -Force
+    }
+
+    if ($Alerts.Count -gt 0) {
+        [PSCustomObject]@{ printerAlerts = $Alerts } | ConvertTo-Json -Depth 5 | Set-Content -Path $PopupConfigFile -Encoding UTF8
     }
     else {
-        Remove-Item "$AgentDir\$PopupQrFile", $PopupConfigFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $PopupConfigFile -Force -ErrorAction SilentlyContinue
     }
 
-    $script:PopupConfig = $Popup
+    $script:PrinterAlerts = $Alerts
     $script:BoothConfigEtag = $Response.Headers["ETag"]
-    Write-Log "Booth config updated (type: $($Body.type), popup: $([bool]$Popup))"
+    Write-Log "Booth config updated (type: $($Body.type), alerts: $(($Alerts | ForEach-Object { $_.id }) -join ', '))"
 }
 
 # The popup helper must run in the user's session (this agent runs in the
@@ -611,10 +655,17 @@ function Update-BoothConfig {
 # booths installed before the popup existed need no reinstall.
 $PopupTaskName = "Photobooth Agent Popup"
 
-function Start-PopupHelper {
-    $Task = Get-ScheduledTask -TaskName $PopupTaskName -ErrorAction SilentlyContinue
+# The helper restarts itself after an update (outside the task), so look at
+# the processes rather than at the task state.
+function Test-PopupHelperRunning {
+    return [bool](Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*$AgentDir\popup.ps1*" })
+}
 
-    if ($Task -and $Task.State -ne "Running") {
+function Start-PopupHelper {
+    if (Test-PopupHelperRunning) { return }
+
+    if (Get-ScheduledTask -TaskName $PopupTaskName -ErrorAction SilentlyContinue) {
         Start-ScheduledTask -TaskName $PopupTaskName -ErrorAction Stop
         Write-Log "Popup helper started"
     }
@@ -674,29 +725,55 @@ function Install-PopupHelper {
     Start-PopupHelper
 }
 
-# Writes alert.json while a DNP reports paper/ribbon end (1100/1200) or no
-# prints left, removes it once the printer is fine again.
-function Update-PaperAlert {
+# The alert matching a DNP state: first alert listing its status code, or
+# flagged whenEmpty (no prints left) or otherErrors (any code >= 1000).
+function Find-PrinterAlert {
     param($DnpDevices)
 
-    $PaperOut = [bool](@($DnpDevices) | Where-Object {
-        $_ -and ($_.statusCode -eq 1100 -or $_.statusCode -eq 1200 -or $_.mediaRemaining -eq 0)
-    })
+    foreach ($Device in @($DnpDevices | Where-Object { $_ })) {
 
-    if ($PaperOut -and $script:PopupConfig) {
-        if (-not (Test-Path $AlertFile)) {
-            $Alert = [ordered]@{ since = (Get-Date).ToUniversalTime().ToString("o"); qrFile = $PopupQrFile }
-            $script:PopupConfig.PSObject.Properties | ForEach-Object { $Alert[$_.Name] = $_.Value }
-            [PSCustomObject]$Alert | ConvertTo-Json | Set-Content -Path $AlertFile -Encoding UTF8
-            Write-Log "Paper-out popup shown"
+        $Code = $Device.statusCode
+        $Empty = $Device.mediaRemaining -eq 0
+
+        foreach ($Alert in $script:PrinterAlerts) {
+            if ($null -ne $Code -and @($Alert.codes) -contains $Code) { return $Alert }
+        }
+
+        foreach ($Alert in $script:PrinterAlerts) {
+            if ($Empty -and $Alert.whenEmpty) { return $Alert }
+            if ($null -ne $Code -and $Code -ge 1000 -and $Alert.otherErrors) { return $Alert }
+        }
+    }
+
+    return $null
+}
+
+# Writes alert.json while the printer has a problem (rewritten when the
+# problem changes, e.g. jam -> open cover), removes it once it is fine again.
+function Update-PrinterAlert {
+    param($DnpDevices)
+
+    $Alert = Find-PrinterAlert -DnpDevices $DnpDevices
+    $Current = $null
+
+    if (Test-Path $AlertFile) {
+        try { $Current = Get-Content $AlertFile -Raw | ConvertFrom-Json } catch { }
+    }
+
+    if ($Alert) {
+        if (-not $Current -or $Current.id -ne $Alert.id) {
+            $Data = [ordered]@{ since = (Get-Date).ToUniversalTime().ToString("o") }
+            $Alert.PSObject.Properties | ForEach-Object { $Data[$_.Name] = $_.Value }
+            [PSCustomObject]$Data | ConvertTo-Json -Depth 5 | Set-Content -Path $AlertFile -Encoding UTF8
+            Write-Log "Printer alert popup: $($Alert.id)"
 
             # Make sure someone is there to display it.
             try { Start-PopupHelper } catch { Write-Log "Popup helper start error: $($_.Exception.Message)" }
         }
     }
-    elseif (Test-Path $AlertFile) {
+    elseif ($Current -or (Test-Path $AlertFile)) {
         Remove-Item $AlertFile -Force -ErrorAction SilentlyContinue
-        Write-Log "Paper-out popup removed"
+        Write-Log "Printer alert popup removed"
     }
 }
 
@@ -908,7 +985,7 @@ while ($true) {
     }
 
     try {
-        if ($Status) { Update-PaperAlert -DnpDevices $Status.dnpDevices }
+        if ($Status) { Update-PrinterAlert -DnpDevices $Status.dnpDevices }
     }
     catch {
         Write-Log "Paper alert error: $($_.Exception.Message)"
