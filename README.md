@@ -118,3 +118,12 @@ Authorization: Bearer <DASHBOARD_TOKEN>
 
 Change `DASHBOARD_TOKEN` in Vercel and redeploy. The dashboard asks for the new one;
 each booth must re-run the installer (it sees the old code is refused and asks again).
+
+### Fonts
+
+Fonts used by the booth templates live in a Google Drive folder shared "anyone with
+the link" (id in `api/fonts.js`). `/api/fonts` lists it (sub-folders included,
+`.ttf/.otf/.ttc/.zip`); the agent downloads what is missing straight from Google and
+installs it for all users (`C:\Windows\Fonts` + HKLM registry), at startup and every
+hour. Add a font to the folder and every booth gets it. Apps already running (e.g.
+dslrBooth) only see new fonts after a restart.

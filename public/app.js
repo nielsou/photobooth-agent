@@ -289,6 +289,17 @@ function arduinoCell(boards) {
   return el("span", { class: "hint", title: "Aucune carte Arduino vue par Windows" }, "Aucune");
 }
 
+// Fonts from the shared Drive folder (agent >= 1.14.0).
+function fontsNote(fonts) {
+  if (!fonts) return null;
+  const missing = asList(fonts.missing);
+  if (missing.length === 0) {
+    return el("div", { class: "hint", title: `${fonts.expected} polices vérifiées le ${formatDate(fonts.checkedAt)}` }, "Polices à jour");
+  }
+  return el("div", { title: `Non installées : ${missing.join(", ")}` },
+    badge(`${missing.length} police${missing.length > 1 ? "s" : ""} manquante${missing.length > 1 ? "s" : ""}`, "warn"));
+}
+
 // Network used to reach the internet (agent >= 1.7.0).
 const NETWORK_TYPES = { ethernet: "Câble", wifi: "Wi-Fi", cellular: "4G/5G", other: "Autre" };
 
@@ -386,7 +397,7 @@ function boothRow(booth) {
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
-    el("td", { class: "nowrap" }, s.agentVersion || "?"),
+    el("td", { class: "nowrap" }, s.agentVersion || "?", fontsNote(s.fonts)),
     el("td", {}, forget),
   );
 }

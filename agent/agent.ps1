@@ -485,6 +485,7 @@ function Get-AgentStatus {
         internet          = $Internet
         network           = $Network
         arduino           = $Arduino
+        fonts             = $FontsStatus
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
@@ -844,6 +845,142 @@ function Update-PrinterAlert {
 }
 
 # --------------------------------------------------
+# FONTS
+# --------------------------------------------------
+
+# Fonts every booth needs (templates), kept in a shared Google Drive folder.
+# The dashboard lists it (/api/fonts); the agent downloads what is missing
+# straight from Google and installs it for all users. Checked at startup
+# (before dslrBooth starts, so it sees them) and every hour. Programs that are
+# already running only see new fonts once restarted.
+$FontsDir = "$env:WINDIR\Fonts"
+$FontsRegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+$FontsInterval = 3600
+$NextFontsCheck = Get-Date
+$FontsStatus = $null
+
+Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+
+# TrueType 00010000 / "true", OpenType "OTTO", collection "ttcf"; zip "PK".
+function Test-FontHeader {
+    param([string]$Path, [switch]$Zip)
+
+    $Bytes = New-Object byte[] 4
+    $Stream = [IO.File]::OpenRead($Path)
+    try { [void]$Stream.Read($Bytes, 0, 4) } finally { $Stream.Dispose() }
+    $Hex = ($Bytes | ForEach-Object { $_.ToString("x2") }) -join ""
+
+    if ($Zip) { return $Hex.StartsWith("504b") }
+    return $Hex -in @("00010000", "74727565", "4f54544f", "74746366")
+}
+
+function Install-FontFile {
+    param([string]$Path, $Registered)
+
+    $Name = [IO.Path]::GetFileName($Path)
+    $Target = Join-Path $FontsDir $Name
+
+    Copy-Item -Path $Path -Destination $Target -Force -ErrorAction Stop
+
+    # Registry value name: the font's family name, as Windows does.
+    $Family = $null
+    try {
+        $Collection = New-Object System.Drawing.Text.PrivateFontCollection
+        $Collection.AddFontFile($Target)
+        $Family = $Collection.Families[0].Name
+        $Collection.Dispose()
+    }
+    catch { }
+
+    if (-not $Family) { $Family = [IO.Path]::GetFileNameWithoutExtension($Name) }
+    $Kind = if ($Name -match '\.otf$') { "OpenType" } else { "TrueType" }
+
+    New-ItemProperty -Path $FontsRegPath -Name "$Family ($Kind)" -Value $Name -PropertyType String -Force -ErrorAction Stop | Out-Null
+    [void]$Registered.Add($Name.ToLowerInvariant())
+    Write-Log "Font installed: $Name ($Family)"
+}
+
+function Install-Fonts {
+
+    $Config = Get-AgentConfig
+    if (-not $Config) { return }
+
+    $List = Invoke-RestMethod `
+        -Uri "$($Config.apiUrl.TrimEnd('/'))/api/fonts" `
+        -Headers @{ Authorization = "Bearer $($Config.agentToken)" } `
+        -TimeoutSec 30 `
+        -UseBasicParsing `
+        -ErrorAction Stop
+
+    if (-not (Test-Path $FontsRegPath)) { New-Item -Path $FontsRegPath -Force | Out-Null }
+
+    # Font files already registered for all users (lower-case file names).
+    $Registered = New-Object 'System.Collections.Generic.HashSet[string]'
+    (Get-ItemProperty -Path $FontsRegPath -ErrorAction SilentlyContinue).PSObject.Properties |
+        Where-Object { $_.Name -notlike "PS*" } |
+        ForEach-Object { [void]$Registered.Add([IO.Path]::GetFileName("$($_.Value)").ToLowerInvariant()) }
+
+    $Temp = "$AgentDir\fonts-download"
+    New-Item -ItemType Directory -Path $Temp -Force | Out-Null
+
+    $Missing = @()
+    $Count = 0
+
+    foreach ($Font in @($List.fonts)) {
+        try {
+            $IsZip = $Font.name -match '\.zip$'
+
+            if (-not $IsZip) {
+                $Count++
+                $Name = $Font.name
+
+                # Already installed (by us or by hand): nothing to do.
+                if ((Test-Path (Join-Path $FontsDir $Name)) -and $Registered.Contains($Name.ToLowerInvariant())) { continue }
+            }
+
+            # Zips are only fetched once (remembered by their Drive id).
+            if ($IsZip -and (Test-Path "$Temp\$($Font.id).done")) { continue }
+
+            $File = Join-Path $Temp $Font.name
+            Invoke-WebRequest -Uri $Font.url -OutFile $File -TimeoutSec 120 -UseBasicParsing -ErrorAction Stop
+
+            if (-not (Test-FontHeader -Path $File -Zip:$IsZip)) {
+                throw "not a font file (Google may have returned an error page)"
+            }
+
+            if ($IsZip) {
+                $Unzipped = Join-Path $Temp $Font.id
+                Expand-Archive -Path $File -DestinationPath $Unzipped -Force
+
+                foreach ($Inner in Get-ChildItem -Path $Unzipped -Recurse -File | Where-Object { $_.Name -match '\.(ttf|otf|ttc)$' }) {
+                    $Count++
+                    if ((Test-Path (Join-Path $FontsDir $Inner.Name)) -and $Registered.Contains($Inner.Name.ToLowerInvariant())) { continue }
+                    if (Test-FontHeader -Path $Inner.FullName) { Install-FontFile -Path $Inner.FullName -Registered $Registered }
+                }
+
+                Set-Content -Path "$Temp\$($Font.id).done" -Value $Font.name
+                Remove-Item $Unzipped -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            else {
+                Install-FontFile -Path $File -Registered $Registered
+            }
+
+            Remove-Item $File -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            $Missing += $Font.name
+            Write-Log "Font error ($($Font.name)): $($_.Exception.Message)"
+        }
+    }
+
+    $script:FontsStatus = [PSCustomObject]@{
+        expected  = $Count
+        missing   = $Missing
+        checkedAt = (Get-Date).ToUniversalTime().ToString("o")
+    }
+}
+
+# --------------------------------------------------
 # SELF-UPDATE
 # --------------------------------------------------
 
@@ -966,6 +1103,15 @@ catch {
     Write-Log "Popup helper setup error: $($_.Exception.Message)"
 }
 
+try {
+    Install-Fonts
+    $NextFontsCheck = (Get-Date).AddSeconds($FontsInterval)
+}
+catch {
+    $NextFontsCheck = (Get-Date).AddMinutes(5)
+    Write-Log "Fonts error: $($_.Exception.Message)"
+}
+
 # With Fast Startup, "Shut down" hibernates the system and this process just
 # resumes later: a long gap between two loop turns means the PC was off/asleep.
 $LastLoopTime = Get-Date
@@ -1033,6 +1179,19 @@ while ($true) {
             $FailedHeartbeats++
             Write-Log "Remote heartbeat error: $($_.Exception.Message)"
 
+        }
+    }
+
+    if ((Get-Date) -ge $NextFontsCheck) {
+
+        $NextFontsCheck = (Get-Date).AddSeconds($FontsInterval)
+
+        try {
+            Install-Fonts
+        }
+        catch {
+            $NextFontsCheck = (Get-Date).AddMinutes(5)
+            Write-Log "Fonts error: $($_.Exception.Message)"
         }
     }
 
