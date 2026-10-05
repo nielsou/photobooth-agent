@@ -1,7 +1,7 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
 import { BOOTH_TYPES, DNP_CODES } from "../lib/printer-alerts.js";
-import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType } from "../lib/store.js";
+import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType, listDnpCodesSeen } from "../lib/store.js";
 
 // The agent posts every 30 s; a booth is offline after 3 missed heartbeats.
 const OFFLINE_AFTER_SECONDS = 90;
@@ -12,11 +12,12 @@ const OFFLINE_AFTER_SECONDS = 90;
 export async function GET(request) {
   let records;
   let types;
+  let codesSeen;
   try {
     const denied = await authorizeDashboard(request);
     if (denied) return denied;
 
-    [records, types] = await Promise.all([listBoothStatuses(), getBoothTypes()]);
+    [records, types, codesSeen] = await Promise.all([listBoothStatuses(), getBoothTypes(), listDnpCodesSeen()]);
   } catch (error) {
     console.error(error);
     return json({ error: "Storage unavailable" }, 503);
@@ -43,6 +44,7 @@ export async function GET(request) {
     offlineAfterSeconds: OFFLINE_AFTER_SECONDS,
     boothTypes: BOOTH_TYPES,
     dnpCodes: DNP_CODES,
+    unknownCodesSeen: codesSeen.filter((entry) => !(entry.code in DNP_CODES)).map((entry) => entry.code),
     booths,
   });
 }

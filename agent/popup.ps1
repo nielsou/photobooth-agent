@@ -39,7 +39,8 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
         </Border>
         <TextBlock x:Name="TitleText" FontSize="40" FontWeight="SemiBold" Foreground="#1B1F24" Margin="0,0,0,12"/>
         <TextBlock x:Name="MessageText" FontSize="26" Foreground="#1B1F24" TextWrapping="Wrap" Margin="0,0,0,12"/>
-        <TextBlock x:Name="DetailText" FontSize="20" Foreground="#5F5E5A" TextWrapping="Wrap" Margin="0,0,0,28"/>
+        <TextBlock x:Name="DetailText" FontSize="20" Foreground="#5F5E5A" TextWrapping="Wrap" Margin="0,0,0,14"/>
+        <TextBlock x:Name="InfoText" FontSize="15" Foreground="#888780" TextWrapping="Wrap" Margin="0,0,0,26"/>
         <Button x:Name="OkButton" Content="OK" FontSize="24" Padding="56,12" HorizontalAlignment="Left"
                 Background="#2F5BEA" Foreground="White" BorderThickness="0" Cursor="Hand"/>
       </StackPanel>
@@ -116,6 +117,11 @@ function Show-Alert {
     $Window.FindName("MessageText").Text = $Alert.message
     $Window.FindName("DetailText").Text = $Alert.detail
     $Window.FindName("QrCaptionText").Text = $Alert.qrCaption
+
+    # Booth / printer / error code, read out by the client when calling support.
+    $Info = $Window.FindName("InfoText")
+    $Info.Text = "$($Alert.info)"
+    $Info.Visibility = if ($Alert.info) { "Visible" } else { "Collapsed" }
 
     $QrPath = "$AgentDir\$($Alert.qrFile)"
     if ($Alert.qrFile -and (Test-Path $QrPath)) {

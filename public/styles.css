@@ -198,3 +198,5 @@ button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
 .qr-cell { text-align: center; width: 120px; }
 .qr-cell a { color: var(--accent); text-decoration: none; font-size: 12px; }
 .qr-cell img { display: block; margin: 0 auto 4px; background: #fff; border-radius: 4px; }
+.tabs button.warn { color: var(--warn); }
+.printer-notes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }

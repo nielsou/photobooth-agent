@@ -1,6 +1,7 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json } from "../lib/http.js";
 import { BOOTH_TYPES, TYPE_NOTES, PRINTER_ALERTS, DNP_CODES, qrPng } from "../lib/printer-alerts.js";
+import { listDnpCodesSeen } from "../lib/store.js";
 
 // GET /api/printer-alerts
 // Authorization: Bearer <DASHBOARD_TOKEN>
@@ -28,5 +29,12 @@ export async function GET(request) {
     })),
   );
 
-  return json({ types, dnpCodes: DNP_CODES });
+  let codesSeen = [];
+  try {
+    codesSeen = await listDnpCodesSeen();
+  } catch (error) {
+    console.error(error);
+  }
+
+  return json({ types, dnpCodes: DNP_CODES, codesSeen });
 }

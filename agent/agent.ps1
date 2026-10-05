@@ -576,6 +576,7 @@ $BoothConfigInterval = 3600
 $NextBoothConfigCheck = Get-Date
 $BoothConfigEtag = $null
 $PrinterAlerts = @()
+$DnpCodeLabels = $null
 
 # 1.9.x stored a single paper-out popup: read it as the "paper" alert.
 function ConvertTo-PrinterAlerts {
@@ -597,7 +598,12 @@ function ConvertTo-PrinterAlerts {
 }
 
 if (Test-Path $PopupConfigFile) {
-    try { $PrinterAlerts = ConvertTo-PrinterAlerts (Get-Content $PopupConfigFile -Raw | ConvertFrom-Json) } catch { }
+    try {
+        $SavedConfig = Get-Content $PopupConfigFile -Raw | ConvertFrom-Json
+        $PrinterAlerts = ConvertTo-PrinterAlerts $SavedConfig
+        $DnpCodeLabels = $SavedConfig.dnpCodes
+    }
+    catch { }
 }
 
 function Update-BoothConfig {
@@ -639,13 +645,14 @@ function Update-BoothConfig {
     }
 
     if ($Alerts.Count -gt 0) {
-        [PSCustomObject]@{ printerAlerts = $Alerts } | ConvertTo-Json -Depth 5 | Set-Content -Path $PopupConfigFile -Encoding UTF8
+        [PSCustomObject]@{ printerAlerts = $Alerts; dnpCodes = $Body.dnpCodes } | ConvertTo-Json -Depth 5 | Set-Content -Path $PopupConfigFile -Encoding UTF8
     }
     else {
         Remove-Item $PopupConfigFile -Force -ErrorAction SilentlyContinue
     }
 
     $script:PrinterAlerts = $Alerts
+    $script:DnpCodeLabels = $Body.dnpCodes
     $script:BoothConfigEtag = $Response.Headers["ETag"]
     Write-Log "Booth config updated (type: $($Body.type), alerts: $(($Alerts | ForEach-Object { $_.id }) -join ', '))"
 }
@@ -736,36 +743,65 @@ function Find-PrinterAlert {
         $Empty = $Device.mediaRemaining -eq 0
 
         foreach ($Alert in $script:PrinterAlerts) {
-            if ($null -ne $Code -and @($Alert.codes) -contains $Code) { return $Alert }
+            if ($null -ne $Code -and @($Alert.codes) -contains $Code) { return @{ Alert = $Alert; Device = $Device } }
         }
 
         foreach ($Alert in $script:PrinterAlerts) {
-            if ($Empty -and $Alert.whenEmpty) { return $Alert }
-            if ($null -ne $Code -and $Code -ge 1000 -and $Alert.otherErrors) { return $Alert }
+            if ($Empty -and $Alert.whenEmpty) { return @{ Alert = $Alert; Device = $Device } }
+            if ($null -ne $Code -and $Code -ge 1000 -and $Alert.otherErrors) { return @{ Alert = $Alert; Device = $Device } }
         }
     }
 
     return $null
 }
 
-# Writes alert.json while the printer has a problem (rewritten when the
-# problem changes, e.g. jam -> open cover), removes it once it is fine again.
-function Update-PrinterAlert {
-    param($DnpDevices)
+# Line shown on the popup so that when the client calls, support knows which
+# booth, printer and error it is about.
+function Get-AlertInfo {
+    param($Status, $Device)
 
-    $Alert = Find-PrinterAlert -DnpDevices $DnpDevices
+    $Queue = @($Status.printers | Where-Object { $_.dnp }) | Select-Object -First 1
+    $Code = $Device.statusCode
+    $Parts = @("Booth $BoothId")
+
+    $Printer = if ($Device.firmware) { "$($Device.firmware)" } elseif ($Queue) { "$($Queue.name)" } else { $null }
+    if ($Printer) { $Parts += $Printer }
+
+    if ($null -ne $Code) {
+        $Label = $null
+        if ($script:DnpCodeLabels) { $Label = $script:DnpCodeLabels."$Code" }
+        $Parts += if ($Label) { "code $Code ($Label)" } else { "code $Code" }
+    }
+
+    if ($null -ne $Device.mediaRemaining) { $Parts += "$($Device.mediaRemaining) tirages restants" }
+    $Parts += (Get-Date -Format "dd/MM HH:mm")
+
+    return "Pour l'assistance : " + ($Parts -join " - ")
+}
+
+# Writes alert.json while the printer has a problem (rewritten when the
+# problem changes, e.g. jam -> open cover, or another error code), removes it
+# once the printer is fine again.
+function Update-PrinterAlert {
+    param($Status)
+
+    $Match = Find-PrinterAlert -DnpDevices $Status.dnpDevices
     $Current = $null
 
     if (Test-Path $AlertFile) {
         try { $Current = Get-Content $AlertFile -Raw | ConvertFrom-Json } catch { }
     }
 
-    if ($Alert) {
-        if (-not $Current -or $Current.id -ne $Alert.id) {
-            $Data = [ordered]@{ since = (Get-Date).ToUniversalTime().ToString("o") }
+    if ($Match) {
+        $Alert = $Match.Alert
+        $Code = $Match.Device.statusCode
+
+        if (-not $Current -or $Current.id -ne $Alert.id -or "$($Current.errorCode)" -ne "$Code") {
+            $Data = [ordered]@{ since = (Get-Date).ToUniversalTime().ToString("o"); errorCode = $Code }
             $Alert.PSObject.Properties | ForEach-Object { $Data[$_.Name] = $_.Value }
+            $Data["info"] = Get-AlertInfo -Status $Status -Device $Match.Device
             [PSCustomObject]$Data | ConvertTo-Json -Depth 5 | Set-Content -Path $AlertFile -Encoding UTF8
-            Write-Log "Printer alert popup: $($Alert.id)"
+            Write-Log "Printer alert popup: $($Alert.id) (code $Code)"
 
             # Make sure someone is there to display it.
             try { Start-PopupHelper } catch { Write-Log "Popup helper start error: $($_.Exception.Message)" }
@@ -985,7 +1021,7 @@ while ($true) {
     }
 
     try {
-        if ($Status) { Update-PrinterAlert -DnpDevices $Status.dnpDevices }
+        if ($Status) { Update-PrinterAlert -Status $Status }
     }
     catch {
         Write-Log "Paper alert error: $($_.Exception.Message)"

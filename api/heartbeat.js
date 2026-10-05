@@ -1,6 +1,6 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
-import { saveBoothStatus } from "../lib/store.js";
+import { saveBoothStatus, recordDnpCodes } from "../lib/store.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -65,6 +65,21 @@ export async function POST(request) {
   } catch (error) {
     console.error(error);
     return json({ error: "Storage unavailable" }, 503);
+  }
+
+  // Keep track of every DNP status code ever reported (best effort).
+  const codes = [...new Set(
+    (Array.isArray(status.dnpDevices) ? status.dnpDevices : [])
+      .map((device) => device?.statusCode)
+      .filter((code) => Number.isInteger(code)),
+  )];
+
+  if (codes.length) {
+    try {
+      await recordDnpCodes(boothId, codes, receivedAt);
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   return json({ ok: true, boothId, receivedAt });

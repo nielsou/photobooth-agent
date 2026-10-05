@@ -318,41 +318,24 @@ function networkCell(s) {
   );
 }
 
-// The booth's main printer: the DNP when there is one, else the default
-// printer, else the first connected one.
-function mainPrinter(printers) {
-  const list = asList(printers).filter((p) => !VIRTUAL_PRINTER.test(p.name || ""));
-  return list.find((p) => p.dnp)
-    || list.find((p) => p.default && p.connected !== false)
-    || list.find((p) => p.connected === true)
-    || list[0];
-}
-
 // Printer alert popups shown on the booth screen (agent >= 1.10.0).
 const POPUP_LABELS = { paper: "Plus de papier", jam: "Bourrage", open: "Imprimante ouverte", error: "Problème d'imprimante" };
 
-function printerSummary(printers, spooler, popupShown) {
-  // Windows print service: when it is stopped, nothing prints at all.
+// Booth-wide printing notes shown above the printers list: Windows print
+// service stopped (nothing prints at all), popup currently on the booth screen.
+function boothPrinterNotes(spooler, popupShown) {
+  const notes = [];
+
   if (spooler && String(spooler).toLowerCase() !== "running") {
-    return el("span", { title: `Service d'impression Windows : ${spooler}` }, badge("Spouleur arrêté", "bad"));
+    notes.push(el("span", { title: `Service d'impression Windows : ${spooler}` }, badge("Spouleur arrêté", "bad")));
   }
 
-  const p = mainPrinter(printers);
-  if (!p) return el("span", { class: "hint" }, "Aucune");
+  if (popupShown) {
+    notes.push(el("span", { class: "hint", title: "Popup affichée sur l'écran du booth" },
+      `popup « ${POPUP_LABELS[popupShown] || popupShown} » à l'écran`));
+  }
 
-  const states = printerProblems(p);
-  if ((Number(p.oldestJobSeconds) || 0) > STUCK_JOB_SECONDS) states.push(["File bloquée", "bad"]);
-
-  const all = states.map(([label]) => label).join(" · ");
-  const pick = (severity) => states.find(([, s]) => s === severity);
-  const [label, kind] = pick("bad") || pick("warn")
-    || states.find(([l]) => l === "Impression")
-    || (p.connected === true ? ["Prête", "ok"] : ["?", "muted"]);
-
-  return el("span", { class: "network", title: `${p.name}${all ? " — " + all : ""}` },
-    badge(label, kind),
-    popupShown ? el("span", { class: "hint", title: "Popup affichée sur l'écran du booth" }, `popup « ${POPUP_LABELS[popupShown] || popupShown} » à l'écran`) : null,
-  );
+  return notes.length ? el("div", { class: "printer-notes" }, ...notes) : null;
 }
 
 function boothRow(booth) {
@@ -364,11 +347,13 @@ function boothRow(booth) {
   return el("tr", { class: booth.online ? "" : "offline" },
     el("td", { class: "booth" }, booth.boothId),
     el("td", {}, typeCell(booth)),
-    el("td", {}, booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad")),
-    el("td", {}, printerSummary(s.printers, s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null))),
-    el("td", { class: "nowrap", title: formatDate(booth.receivedAt) }, formatAge(booth.ageSeconds)),
+    el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
+      booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad"),
+      el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
     el("td", {}, networkCell(s)),
-    el("td", { class: "printers-cell" }, printersCell(booth.boothId, s.printers)),
+    el("td", { class: "printers-cell" },
+      boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
+      printersCell(booth.boothId, s.printers)),
     el("td", { class: "nowrap" }, s.agentVersion || "?"),
     el("td", {}, forget),
   );
@@ -426,6 +411,7 @@ async function refresh() {
     const data = await api("/api/booths");
     boothTypes = data.boothTypes || [];
     dnpCodes = data.dnpCodes || dnpCodes;
+    flagUnknownCodes(asList(data.unknownCodesSeen));
     const booths = data.booths || [];
     const online = booths.filter((b) => b.online).length;
     const troubled = booths
@@ -486,7 +472,7 @@ function showTab(tab) {
     button.classList.toggle("active", button.dataset.tab === tab);
   }
   try { history.replaceState(null, "", tab === "config" ? "#config" : location.pathname); } catch { /* ignore */ }
-  if (tab === "config" && !configLoaded) loadConfig();
+  if (tab === "config") loadConfig();
 }
 
 for (const button of document.querySelectorAll("#tabs button")) {
@@ -537,11 +523,51 @@ function typeCard(entry) {
   );
 }
 
+function flagUnknownCodes(codes) {
+  const button = document.querySelector('#tabs button[data-tab="config"]');
+  if (!button) return;
+  const n = codes.length;
+  button.textContent = n ? `Configuration · ${n} code${n > 1 ? "s" : ""} inconnu${n > 1 ? "s" : ""}` : "Configuration";
+  button.classList.toggle("warn", n > 0);
+}
+
+// Every DNP code ever reported by a booth; unknown ones need identifying.
+function codesCard(codesSeen) {
+  const weekAgo = Date.now() - 7 * 86400000;
+  const rows = asList(codesSeen).map((entry) => {
+    const known = entry.code in dnpCodes;
+    const isNew = Date.parse(entry.firstSeen) > weekAgo;
+    return el("tr", {},
+      el("td", { class: "nowrap" }, String(entry.code)),
+      el("td", {},
+        known ? dnpLabel(entry.code) : badge("Inconnu — à identifier", "warn"),
+        isNew ? el("span", { class: "hint" }, " · nouveau") : null,
+      ),
+      el("td", { class: "nowrap" }, formatDate(entry.firstSeen), el("div", { class: "hint" }, entry.firstBooth)),
+      el("td", { class: "nowrap" }, formatDate(entry.lastSeen), el("div", { class: "hint" }, entry.lastBooth)),
+      el("td", { class: "nowrap" }, String(entry.count)),
+    );
+  });
+
+  return el("article", { class: "config-card" },
+    el("h2", {}, "Codes reçus des imprimantes"),
+    el("p", { class: "hint" }, "Chaque code d'état DNP remonté par un booth, depuis la mise en place du suivi. Un code inconnu n'est pas dans la liste de référence : il déclenche la popup « Problème d'imprimante » s'il est ≥ 1000."),
+    rows.length === 0 ? el("p", { class: "hint" }, "Aucun code reçu pour l'instant.") : el("div", { class: "table-wrap" },
+      el("table", {},
+        el("thead", {}, el("tr", {},
+          el("th", {}, "Code"), el("th", {}, "Signification"), el("th", {}, "Premier relevé"),
+          el("th", {}, "Dernier relevé"), el("th", {}, "Relevés"))),
+        el("tbody", {}, ...rows),
+      ),
+    ),
+  );
+}
+
 async function loadConfig() {
   try {
     const data = await api("/api/printer-alerts");
     dnpCodes = data.dnpCodes || dnpCodes;
-    $("config").replaceChildren(...asList(data.types).map(typeCard));
+    $("config").replaceChildren(codesCard(data.codesSeen), ...asList(data.types).map(typeCard));
     configLoaded = true;
   } catch (error) {
     showError(error.message);
