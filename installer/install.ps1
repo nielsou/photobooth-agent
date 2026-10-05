@@ -350,13 +350,16 @@ try {
         -Force | Out-Null
 
     Write-Host "Popup task created (starts at every logon)."
+
+    # Start it now in the logged-on user's session (it only shows something
+    # on alert). Through the task, not Start-Process: a child process would
+    # keep "Start-Process -Wait" (install.cmd) waiting forever, and would run
+    # elevated.
+    Start-ScheduledTask -TaskName "$TaskName Popup"
 }
 catch {
-    Write-Host "WARNING: could not create the popup task: $($_.Exception.Message)"
+    Write-Host "WARNING: could not set up the popup task: $($_.Exception.Message)"
 }
-
-# Start it now for the current session (it only shows something on alert).
-Start-Process -FilePath "powershell.exe" -ArgumentList $PopupArguments -WindowStyle Hidden
 
 # --------------------------------------------------
 # CLEANUP
