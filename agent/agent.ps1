@@ -262,14 +262,27 @@ function Get-AgentStatus {
             if ($SignalLine -match '(\d+)\s*%') { $Signal = [int]$Matches[1] }
         }
 
+        # Quality of the internet link (for a 4G router, Windows only sees the
+        # cable): 3 pings of 32 bytes give latency and packet loss.
+        $Pings = @(Test-Connection -ComputerName "1.1.1.1" -Count 3 -ErrorAction SilentlyContinue)
+        $LatencyMs = $null
+
+        if ($Pings.Count -gt 0) {
+            $LatencyMs = [int](($Pings | Measure-Object -Property ResponseTime -Average).Average)
+        }
+
         $Network = [PSCustomObject]@{
-            type        = $Type
-            adapter     = $Adapter.Name
-            description = $Adapter.InterfaceDescription
-            linkSpeed   = $Adapter.LinkSpeed
-            name        = if ($Ssid) { $Ssid } else { $ConnectionProfile.Name }
-            ssid        = $Ssid
-            signal      = $Signal
+            type             = $Type
+            adapter          = $Adapter.Name
+            description      = $Adapter.InterfaceDescription
+            linkSpeed        = $Adapter.LinkSpeed
+            name             = if ($Ssid) { $Ssid } else { $ConnectionProfile.Name }
+            ssid             = $Ssid
+            signal           = $Signal
+            latencyMs        = $LatencyMs
+            packetLoss       = [int](100 * (3 - $Pings.Count) / 3)
+            heartbeatMs      = $LastHeartbeatMs
+            failedHeartbeats = $FailedHeartbeats
         }
     }
     catch {
@@ -542,6 +555,10 @@ function Send-Heartbeat {
 $LastCheckedSha = $null
 $NextUpdateCheck = Get-Date
 
+# Heartbeat round-trip (ms) and consecutive failures, reported in "network".
+$LastHeartbeatMs = $null
+$FailedHeartbeats = 0
+
 function Update-Agent {
 
     $Sha = Invoke-RestMethod `
@@ -682,15 +699,24 @@ while ($true) {
 
     if ($StatusJson) {
 
+        # Round-trip time and failures are reported with the next heartbeat.
+        $Stopwatch = [Diagnostics.Stopwatch]::StartNew()
+
         try {
 
             $Result = Send-Heartbeat -Json $StatusJson
+
+            if ($Result -eq "sent") {
+                $LastHeartbeatMs = [int]$Stopwatch.ElapsedMilliseconds
+                $FailedHeartbeats = 0
+            }
 
             Write-Log "Remote heartbeat $Result"
 
         }
         catch {
 
+            $FailedHeartbeats++
             Write-Log "Remote heartbeat error: $($_.Exception.Message)"
 
         }

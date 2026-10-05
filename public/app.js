@@ -275,20 +275,53 @@ Ce choix ne pourra plus être modifié dans le dashboard.`)) {
 // Network used to reach the internet (agent >= 1.7.0).
 const NETWORK_TYPES = { ethernet: "Câble", wifi: "Wi-Fi", cellular: "4G/5G", other: "Autre" };
 
+// Link quality (agent >= 1.8.0): ping latency/loss to 1.1.1.1, Wi-Fi signal.
+// Returns [severity, reasons].
+function networkQuality(n) {
+  const bad = [];
+  const warn = [];
+  const latency = n.latencyMs;
+  const loss = n.packetLoss;
+
+  if (Number.isFinite(loss) && loss >= 60) bad.push(`${loss} % de perte`);
+  else if (Number.isFinite(loss) && loss > 0) warn.push(`${loss} % de perte`);
+
+  if (Number.isFinite(latency) && latency >= 400) bad.push(`latence ${latency} ms`);
+  else if (Number.isFinite(latency) && latency >= 150) warn.push(`latence ${latency} ms`);
+
+  if (n.type === "wifi" && Number.isFinite(n.signal)) {
+    if (n.signal < 25) bad.push(`signal ${n.signal} %`);
+    else if (n.signal < 50) warn.push(`signal ${n.signal} %`);
+  }
+
+  if (n.failedHeartbeats > 0) warn.push(`${n.failedHeartbeats} envoi(s) raté(s)`);
+
+  return bad.length ? ["bad", [...bad, ...warn]] : warn.length ? ["warn", warn] : ["ok", []];
+}
+
 function networkCell(s) {
   const n = s.network;
 
   if (!n) return s.internet === false ? badge("Pas d'internet", "bad") : el("span", { class: "hint" }, "?");
 
-  const weak = n.type === "wifi" && Number.isFinite(n.signal) && n.signal < 40;
-  const kind = s.internet === false ? "bad" : weak ? "warn" : "ok";
   const label = NETWORK_TYPES[n.type] || n.type;
-  const title = [n.description, n.linkSpeed, n.signal != null ? `signal ${n.signal} %` : null].filter(Boolean).join(" · ");
+
+  if (s.internet === false) return badge(`${label} · pas d'internet`, "bad");
+
+  const [kind, reasons] = networkQuality(n);
+  const text = Number.isFinite(n.latencyMs) ? `${label} · ${n.latencyMs} ms` : label;
+  const title = [
+    ...reasons,
+    n.description,
+    n.linkSpeed,
+    n.signal != null ? `signal ${n.signal} %` : null,
+    n.heartbeatMs != null ? `envoi dashboard ${n.heartbeatMs} ms` : null,
+  ].filter(Boolean).join(" · ");
 
   return el("span", { class: "network", title },
-    badge(s.internet === false ? `${label} · pas d'internet` : label, kind),
+    badge(text, kind),
     n.name ? el("span", { class: "hint" }, n.name) : null,
-    weak ? el("span", { class: "hint" }, `${n.signal} %`) : null,
+    reasons.length ? el("span", { class: "hint" }, reasons[0]) : null,
   );
 }
 
