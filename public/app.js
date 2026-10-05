@@ -529,7 +529,6 @@ function alertRow(alert) {
 
 function typeCard(entry) {
   const alerts = asList(entry.alerts);
-  const snooze = alerts[0]?.snoozeMinutes;
 
   return el("article", { class: "config-card" },
     el("h2", {}, entry.type),
@@ -541,7 +540,7 @@ function typeCard(entry) {
       ),
     ),
     alerts.length === 0 ? null : el("p", { class: "hint" },
-      `Bouton OK : masque la popup ${snooze || 1} min. Elle disparaît seule quand l'imprimante est de nouveau prête.`),
+      "Bouton OK : réduit la popup en pastille « ! » en bas à droite de l'écran ; un appui dessus la rouvre. Un nouveau problème rouvre la popup. Tout disparaît seul quand l'imprimante est de nouveau prête."),
   );
 }
 

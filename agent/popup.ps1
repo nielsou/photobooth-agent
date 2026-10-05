@@ -2,9 +2,9 @@
 #
 # Runs in the logged-on user's session (the agent runs as SYSTEM in session 0
 # and cannot show windows). Watches alert.json written by the agent and shows
-# a fullscreen, always-on-top popup over dslrBooth while the printer is out of
-# paper. "OK" hides it for snoozeMinutes; it goes away by itself once the agent
-# removes alert.json. Started at logon by the "Photobooth Agent Popup" task.
+# a fullscreen, always-on-top popup over dslrBooth while the printer has a
+# problem. "OK" minimizes it to a floating "!" badge (tap to reopen); both go
+# away by themselves once the agent removes alert.json. Started at logon by the "Photobooth Agent Popup" task.
 
 param(
     [string]$AgentDir = "C:\ProgramData\PhotoboothAgent"
@@ -55,11 +55,57 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
 $Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $Xaml))
 
+# Minimized form: a round "!" floating bottom-right, in front of dslrBooth.
+# Tapping it opens the popup again.
+[xml]$BadgeXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize" ShowActivated="False"
+        Width="120" Height="120">
+  <Button x:Name="ReopenButton" Cursor="Hand" AutomationProperties.Name="Show printer problem"
+          RenderTransformOrigin="0.5,0.5">
+    <Button.RenderTransform>
+      <ScaleTransform x:Name="Pulse" ScaleX="0.86" ScaleY="0.86"/>
+    </Button.RenderTransform>
+    <Button.Triggers>
+      <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+        <BeginStoryboard>
+          <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+            <DoubleAnimation Storyboard.TargetName="Pulse" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.75"/>
+            <DoubleAnimation Storyboard.TargetName="Pulse" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.75"/>
+          </Storyboard>
+        </BeginStoryboard>
+      </EventTrigger>
+    </Button.Triggers>
+    <Button.Template>
+      <ControlTemplate TargetType="Button">
+        <Grid>
+          <Ellipse Fill="#1B1F24"/>
+          <Ellipse Fill="White" Margin="7"/>
+          <Ellipse Fill="#F2A30F" Margin="12"/>
+          <TextBlock Text="!" Foreground="#1B1F24" FontFamily="Segoe UI" FontSize="62" FontWeight="Black"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-8,0,0"/>
+        </Grid>
+      </ControlTemplate>
+    </Button.Template>
+  </Button>
+</Window>
+"@
+
+$Badge = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $BadgeXaml))
+
 $State = @{
-    SnoozedUntil = [datetime]::MinValue
-    SnoozeMinutes = 5
     ShownKey = $null
+    Minimized = $false
     ScriptTime = (Get-Item $PSCommandPath).LastWriteTimeUtc
+}
+
+function Show-Badge {
+    $Area = [System.Windows.SystemParameters]::WorkArea
+    $Badge.Left = $Area.Right - $Badge.Width - 28
+    $Badge.Top = $Area.Bottom - $Badge.Height - 28
+    $Badge.Show()
 }
 
 function Show-Alert {
@@ -84,27 +130,43 @@ function Show-Alert {
         $Window.FindName("QrPanel").Visibility = "Visible"
     }
     else {
-        # Alert without a procedure video (e.g. other printer errors).
+        # Alert without a procedure video (open cover, other printer errors).
         $Window.FindName("QrPanel").Visibility = "Collapsed"
     }
 
-    if ($Alert.snoozeMinutes) { $State.SnoozeMinutes = [int]$Alert.snoozeMinutes }
     $State.ShownKey = "$($Alert.id)|$($Alert.since)"
+    $State.Minimized = $false
 
+    $Badge.Hide()
     $Window.Show()
     $Window.Activate() | Out-Null
 }
 
-$Window.FindName("OkButton").Add_Click({
-    $State.SnoozedUntil = (Get-Date).AddMinutes($State.SnoozeMinutes)
+function Hide-All {
+    $State.ShownKey = $null
+    $State.Minimized = $false
+    if ($Window.IsVisible) { $Window.Hide() }
+    if ($Badge.IsVisible) { $Badge.Hide() }
+}
+
+# OK: minimize to the "!" badge until the problem is solved.
+function Minimize-Alert {
+    $State.Minimized = $true
     $Window.Hide()
-})
+    Show-Badge
+}
+
+$Window.FindName("OkButton").Add_Click({ Minimize-Alert })
 
 # Alt+F4 behaves like OK (a closed WPF window could not be shown again).
-$Window.Add_Closing({
-    $_.Cancel = $true
-    $State.SnoozedUntil = (Get-Date).AddMinutes($State.SnoozeMinutes)
-    $Window.Hide()
+$Window.Add_Closing({ $_.Cancel = $true; Minimize-Alert })
+$Badge.Add_Closing({ $_.Cancel = $true })
+
+$Badge.FindName("ReopenButton").Add_Click({
+    $State.Minimized = $false
+    $Badge.Hide()
+    $Window.Show()
+    $Window.Activate() | Out-Null
 })
 
 $Timer = New-Object Windows.Threading.DispatcherTimer
@@ -124,28 +186,27 @@ $Timer.Add_Tick({
             $Alert = Get-Content -Path $AlertFile -Raw -ErrorAction Stop | ConvertFrom-Json
         }
 
+        # Printer is fine again: popup and badge go away.
         if (-not $Alert) {
-            # Printer is fine again: hide and forget any snooze.
-            $State.SnoozedUntil = [datetime]::MinValue
-            $State.ShownKey = $null
-            if ($Window.IsVisible) { $Window.Hide() }
+            Hide-All
             return
         }
 
-        # A different problem (e.g. jam -> open cover): show it right away.
+        # A new problem (e.g. paper end -> jam): full popup, even if minimized.
         if ("$($Alert.id)|$($Alert.since)" -ne $State.ShownKey) {
-            $State.SnoozedUntil = [datetime]::MinValue
             Show-Alert -Alert $Alert
             return
         }
 
-        if ($Window.IsVisible) {
-            # Stay in front of dslrBooth, which may grab the foreground.
+        # Stay in front of dslrBooth, which may grab the foreground.
+        if ($State.Minimized) {
+            if (-not $Badge.IsVisible) { Show-Badge }
+            $Badge.Topmost = $false
+            $Badge.Topmost = $true
+        }
+        elseif ($Window.IsVisible) {
             $Window.Topmost = $false
             $Window.Topmost = $true
-        }
-        elseif ((Get-Date) -ge $State.SnoozedUntil) {
-            Show-Alert -Alert $Alert
         }
     }
     catch {
