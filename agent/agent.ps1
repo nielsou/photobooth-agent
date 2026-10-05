@@ -445,6 +445,7 @@ function Get-AgentStatus {
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
+        paperOutPopup     = (Test-Path "$AgentDir\alert.json")
         heartbeat         = $true
         timestamp         = (Get-Date).ToUniversalTime().ToString("o")
     }
@@ -546,6 +547,88 @@ function Send-Heartbeat {
 }
 
 # --------------------------------------------------
+# PAPER-OUT POPUP
+# --------------------------------------------------
+
+# The dashboard tells each booth which popup to show when its DNP runs out of
+# paper or ribbon (only Signature booths get one). Fetched every hour; the
+# server answers 304 when nothing changed. The popup itself is shown by
+# popup.ps1 in the user's session, which watches alert.json.
+$AlertFile = "$AgentDir\alert.json"
+$PopupConfigFile = "$AgentDir\popup-config.json"
+$PopupQrFile = "paper-qr.png"
+$BoothConfigInterval = 3600
+$NextBoothConfigCheck = Get-Date
+$BoothConfigEtag = $null
+$PopupConfig = $null
+
+if (Test-Path $PopupConfigFile) {
+    try { $PopupConfig = Get-Content $PopupConfigFile -Raw | ConvertFrom-Json } catch { }
+}
+
+function Update-BoothConfig {
+
+    $Config = Get-AgentConfig
+    if (-not $Config) { return }
+
+    $Headers = @{ Authorization = "Bearer $($Config.agentToken)" }
+    if ($script:BoothConfigEtag) { $Headers["If-None-Match"] = $script:BoothConfigEtag }
+
+    try {
+        $Response = Invoke-WebRequest `
+            -Uri "$($Config.apiUrl.TrimEnd('/'))/api/booth-config?id=$BoothId" `
+            -Headers $Headers `
+            -TimeoutSec 15 `
+            -UseBasicParsing `
+            -ErrorAction Stop
+    }
+    catch {
+        # Windows PowerShell reports "304 Not Modified" as an error.
+        if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 304) { return }
+        throw
+    }
+
+    $Body = $Response.Content | ConvertFrom-Json
+    $Popup = $Body.paperOutPopup
+
+    if ($Popup) {
+        [IO.File]::WriteAllBytes("$AgentDir\$PopupQrFile", [Convert]::FromBase64String($Popup.qrPng))
+        $Popup.PSObject.Properties.Remove("qrPng")
+        $Popup | ConvertTo-Json | Set-Content -Path $PopupConfigFile -Encoding UTF8
+    }
+    else {
+        Remove-Item "$AgentDir\$PopupQrFile", $PopupConfigFile -Force -ErrorAction SilentlyContinue
+    }
+
+    $script:PopupConfig = $Popup
+    $script:BoothConfigEtag = $Response.Headers["ETag"]
+    Write-Log "Booth config updated (type: $($Body.type), popup: $([bool]$Popup))"
+}
+
+# Writes alert.json while a DNP reports paper/ribbon end (1100/1200) or no
+# prints left, removes it once the printer is fine again.
+function Update-PaperAlert {
+    param($DnpDevices)
+
+    $PaperOut = [bool](@($DnpDevices) | Where-Object {
+        $_ -and ($_.statusCode -eq 1100 -or $_.statusCode -eq 1200 -or $_.mediaRemaining -eq 0)
+    })
+
+    if ($PaperOut -and $script:PopupConfig) {
+        if (-not (Test-Path $AlertFile)) {
+            $Alert = [ordered]@{ since = (Get-Date).ToUniversalTime().ToString("o"); qrFile = $PopupQrFile }
+            $script:PopupConfig.PSObject.Properties | ForEach-Object { $Alert[$_.Name] = $_.Value }
+            [PSCustomObject]$Alert | ConvertTo-Json | Set-Content -Path $AlertFile -Encoding UTF8
+            Write-Log "Paper-out popup shown"
+        }
+    }
+    elseif (Test-Path $AlertFile) {
+        Remove-Item $AlertFile -Force -ErrorAction SilentlyContinue
+        Write-Log "Paper-out popup removed"
+    }
+}
+
+# --------------------------------------------------
 # SELF-UPDATE
 # --------------------------------------------------
 
@@ -601,25 +684,34 @@ function Update-Agent {
 
     Write-Log "Update available: $AgentVersion -> $RemoteVersion ($($Sha.Substring(0, 7)))"
 
-    $NewAgent = "$AgentDir\agent.ps1.new"
+    # agent.ps1 and the popup helper ship together; both must download and
+    # parse before either replaces a working file.
+    $Files = @("agent.ps1", "popup.ps1")
 
-    Invoke-WebRequest `
-        -Uri "$RawUrl/agent/agent.ps1" `
-        -OutFile $NewAgent `
-        -TimeoutSec 30 `
-        -UseBasicParsing `
-        -ErrorAction Stop
+    foreach ($File in $Files) {
 
-    # Never replace a working agent with one that does not even parse.
-    $ParseErrors = $null
-    [System.Management.Automation.Language.Parser]::ParseFile($NewAgent, [ref]$null, [ref]$ParseErrors) | Out-Null
+        $New = "$AgentDir\$File.new"
 
-    if ($ParseErrors -or (Get-Item $NewAgent).Length -lt 1024) {
-        Remove-Item $NewAgent -Force -ErrorAction SilentlyContinue
-        throw "Downloaded agent is invalid, update skipped"
+        Invoke-WebRequest `
+            -Uri "$RawUrl/agent/$File" `
+            -OutFile $New `
+            -TimeoutSec 30 `
+            -UseBasicParsing `
+            -ErrorAction Stop
+
+        $ParseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($New, [ref]$null, [ref]$ParseErrors) | Out-Null
+
+        if ($ParseErrors -or (Get-Item $New).Length -lt 1024) {
+            $Files | ForEach-Object { Remove-Item "$AgentDir\$_.new" -Force -ErrorAction SilentlyContinue }
+            throw "Downloaded $File is invalid, update skipped"
+        }
     }
 
-    Move-Item -Path $NewAgent -Destination "$AgentDir\agent.ps1" -Force -ErrorAction Stop
+    foreach ($File in $Files) {
+        Move-Item -Path "$AgentDir\$File.new" -Destination "$AgentDir\$File" -Force -ErrorAction Stop
+    }
+
     Set-Content -Path $VersionFile -Value $RemoteVersion -ErrorAction Stop
 
     Write-Log "Updated to $RemoteVersion, restarting agent"
@@ -720,6 +812,27 @@ while ($true) {
             Write-Log "Remote heartbeat error: $($_.Exception.Message)"
 
         }
+    }
+
+    if ((Get-Date) -ge $NextBoothConfigCheck) {
+
+        $NextBoothConfigCheck = (Get-Date).AddSeconds($BoothConfigInterval)
+
+        try {
+            Update-BoothConfig
+        }
+        catch {
+            # Retry sooner when the dashboard could not be reached.
+            $NextBoothConfigCheck = (Get-Date).AddMinutes(5)
+            Write-Log "Booth config error: $($_.Exception.Message)"
+        }
+    }
+
+    try {
+        if ($Status) { Update-PaperAlert -DnpDevices $Status.dnpDevices }
+    }
+    catch {
+        Write-Log "Paper alert error: $($_.Exception.Message)"
     }
 
     if ((Get-Date) -ge $NextUpdateCheck) {

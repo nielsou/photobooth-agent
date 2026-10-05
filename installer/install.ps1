@@ -118,6 +118,13 @@ Invoke-WebRequest `
     -OutFile $TempAgent `
     -UseBasicParsing
 
+$TempPopup = "$env:TEMP\photobooth-agent-popup.ps1"
+
+Invoke-WebRequest `
+    -Uri "$RepoRawUrl/agent/popup.ps1" `
+    -OutFile $TempPopup `
+    -UseBasicParsing
+
 # --------------------------------------------------
 # INSTALL
 # --------------------------------------------------
@@ -129,15 +136,20 @@ Write-Host "Installing agent..."
 try { schtasks.exe /End /TN $TaskName 2>&1 | Out-Null } catch { }
 
 Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
-    Where-Object { $_.CommandLine -like "*$InstallDir\agent.ps1*" } |
+    Where-Object { $_.CommandLine -like "*$InstallDir\agent.ps1*" -or $_.CommandLine -like "*$InstallDir\popup.ps1*" } |
     ForEach-Object {
-        Write-Host "Stopping running agent (PID $($_.ProcessId))..."
+        Write-Host "Stopping running agent process (PID $($_.ProcessId))..."
         Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
     }
 
 Copy-Item `
     $TempAgent `
     "$InstallDir\agent.ps1" `
+    -Force
+
+Copy-Item `
+    $TempPopup `
+    "$InstallDir\popup.ps1" `
     -Force
 
 Set-Content `
@@ -309,11 +321,49 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # --------------------------------------------------
+# POPUP HELPER (user session)
+# --------------------------------------------------
+
+# The agent runs as SYSTEM and cannot show windows: popup.ps1 runs in the
+# logged-on user's session (any user, via the Users group) and shows the
+# paper-out popup over dslrBooth.
+Write-Host "Creating popup task..."
+
+$PopupArguments = "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\popup.ps1`""
+
+try {
+    $PopupAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $PopupArguments
+    $PopupTrigger = New-ScheduledTaskTrigger -AtLogOn
+    $PopupPrincipal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
+    $PopupSettings = New-ScheduledTaskSettingsSet `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -MultipleInstances IgnoreNew
+
+    Register-ScheduledTask `
+        -TaskName "$TaskName Popup" `
+        -Action $PopupAction `
+        -Trigger $PopupTrigger `
+        -Principal $PopupPrincipal `
+        -Settings $PopupSettings `
+        -Force | Out-Null
+
+    Write-Host "Popup task created (starts at every logon)."
+}
+catch {
+    Write-Host "WARNING: could not create the popup task: $($_.Exception.Message)"
+}
+
+# Start it now for the current session (it only shows something on alert).
+Start-Process -FilePath "powershell.exe" -ArgumentList $PopupArguments -WindowStyle Hidden
+
+# --------------------------------------------------
 # CLEANUP
 # --------------------------------------------------
 
 Remove-Item `
-    $TempAgent `
+    $TempAgent, $TempPopup `
     -Force `
     -ErrorAction SilentlyContinue
 
