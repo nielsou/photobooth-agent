@@ -163,30 +163,46 @@ function Get-DnpInfo {
         $Raw = [ordered]@{}
         $Errors = @()
 
-        foreach ($Query in "MQTY", "STATUS", "MEDIA", "SERIAL_NUMBER", "FVER") {
+        # name, arg1, arg2 ("STATUS" is a command of its own, not an INFO query)
+        $Queries = @(
+            @("MQTY", "INFO", "MQTY"),
+            @("STATUS", "STATUS", ""),
+            @("MEDIA", "INFO", "MEDIA"),
+            @("SERIAL_NUMBER", "INFO", "SERIAL_NUMBER"),
+            @("FVER", "INFO", "FVER")
+        )
+
+        foreach ($Query in $Queries) {
             try {
-                $Raw[$Query] = [DnpUsb]::Query($Path, "INFO", $Query, 3000)
+                # Answers are padded with CR, NUL and spaces.
+                $Raw[$Query[0]] = ([DnpUsb]::Query($Path, $Query[1], $Query[2], 3000) -replace '[\x00\r\n]', '').Trim()
             }
             catch {
                 $Inner = $_.Exception.InnerException
-                $Errors += "$Query : $(if ($Inner) { $Inner.Message } else { $_.Exception.Message })"
+                $Errors += "$($Query[0]) : $(if ($Inner) { $Inner.Message } else { $_.Exception.Message })"
 
                 # No answer to the first query: do not wait on the others.
-                if ($Query -eq "MQTY") { break }
+                if ($Query[0] -eq "MQTY") { break }
             }
         }
 
-        # MQTY answers e.g. "MQTY0350" or "0350": keep the trailing number.
+        # MQTY answers e.g. "MQTY0017" = 17 prints left.
         $Remaining = $null
-        if ("$($Raw['MQTY'])" -match '(\d+)\s*$') {
+        if ("$($Raw['MQTY'])" -match '(\d+)$') {
             $Remaining = [int]$Matches[1]
+        }
+
+        # STATUS answers a code: 0 idle, 1 printing, 1000 cover open, 1100 paper end...
+        $StatusCode = $null
+        if ("$($Raw['STATUS'])" -match '^\d+$') {
+            $StatusCode = [int]$Raw["STATUS"]
         }
 
         $Result += [PSCustomObject]@{
             device         = ($Path -replace '^.*?#(vid_[0-9a-f]{4}&pid_[0-9a-f]{4}).*$', '$1')
             mediaRemaining = $Remaining
+            statusCode     = $StatusCode
             media          = $Raw["MEDIA"]
-            printerStatus  = $Raw["STATUS"]
             serial         = $Raw["SERIAL_NUMBER"]
             firmware       = $Raw["FVER"]
             raw            = [PSCustomObject]$Raw

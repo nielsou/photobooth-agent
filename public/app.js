@@ -124,6 +124,8 @@ function printerProblems(p) {
   if (p.workOffline && !flags.includes("Offline")) states.push(["Hors ligne", "bad"]);
   for (const flag of flags) if (PRINTER_STATUS[flag]) states.push(PRINTER_STATUS[flag]);
   if (ERROR_STATE[p.errorState]) states.push(ERROR_STATE[p.errorState]);
+  const dnpState = dnpStatus(p.dnp?.statusCode);
+  if (dnpState) states.push(dnpState);
 
   // Deduplicate labels (e.g. PaperOut flag + "no paper" error state).
   return states.filter(([label], i) => states.findIndex(([l]) => l === label) === i);
@@ -156,6 +158,28 @@ function queueView(p, key) {
   );
   details.dataset.key = key;
   return details;
+}
+
+// DNP "STATUS" codes (agent >= 1.6.1), as listed by Gutenprint's DNP backend.
+const DNP_STATUS = {
+  1: ["Impression", "ok"],
+  500: ["Refroidissement", "muted"],
+  510: ["Refroidissement", "muted"],
+  900: ["Veille", "muted"],
+  1000: ["Capot ouvert", "bad"],
+  1010: ["Bac à chutes absent", "bad"],
+  1100: ["Fin de papier", "bad"],
+  1200: ["Fin de ruban", "bad"],
+  1300: ["Bourrage", "bad"],
+  1400: ["Erreur ruban", "bad"],
+  1500: ["Mauvais papier", "bad"],
+  1600: ["Erreur de données", "bad"],
+};
+
+function dnpStatus(code) {
+  if (!Number.isInteger(code) || code === 0) return null;
+  if (DNP_STATUS[code]) return DNP_STATUS[code];
+  return code >= 1000 ? [`Panne imprimante (code ${code})`, "bad"] : null;
 }
 
 // Prints left on a DNP printer's media (agent >= 1.6.0, DNP over USB only).
