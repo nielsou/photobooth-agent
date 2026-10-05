@@ -1039,11 +1039,31 @@ function Install-PrinterDrivers {
             if (-not (Test-Path $Inf)) { throw "driver file not found in zip: $($Driver.inf)" }
 
             # Every catalog of the package must be validly signed by the vendor.
+            $Signers = @()
             foreach ($Cat in Get-ChildItem -Path (Split-Path $Inf) -Filter *.cat -File) {
                 $Signature = Get-AuthenticodeSignature -FilePath $Cat.FullName
                 if ($Signature.Status -ne "Valid" -or $Signature.SignerCertificate.Subject -notmatch [regex]::Escape($Driver.signer)) {
                     throw "invalid signature on $($Cat.Name): $($Signature.Status) $($Signature.SignerCertificate.Subject)"
                 }
+                $Signers += $Signature.SignerCertificate
+            }
+
+            # Non-WHQL vendor drivers make Windows ask "install this device
+            # software?", which nobody can answer from session 0 (pnputil then
+            # fails with 0xE0000242). Trusting the vendor's verified signing
+            # certificate, as "always trust" in that dialog would, avoids it.
+            $Store = New-Object Security.Cryptography.X509Certificates.X509Store("TrustedPublisher", "LocalMachine")
+            $Store.Open("ReadWrite")
+            try {
+                foreach ($Cert in $Signers) {
+                    if (-not ($Store.Certificates | Where-Object { $_.Thumbprint -eq $Cert.Thumbprint })) {
+                        $Store.Add($Cert)
+                        Write-Log "Trusted publisher added: $($Cert.Subject.Split(',')[0]) ($($Cert.Thumbprint))"
+                    }
+                }
+            }
+            finally {
+                $Store.Close()
             }
 
             $Output = & pnputil.exe /add-driver "$Inf" /install 2>&1
