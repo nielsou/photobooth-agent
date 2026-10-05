@@ -488,6 +488,7 @@ function Get-AgentStatus {
         fonts             = $FontsStatus
         drivers           = $DriversStatus
         startScreenVideo  = $StartScreenStatus
+        lights            = $LightsStatus
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
@@ -686,6 +687,7 @@ function Update-BoothConfig {
     $script:PrinterAlerts = $Alerts
     $script:BoothType = $Body.type
     $script:StartScreenVideo = $Body.startScreenVideo
+    $script:LightsScript = $Body.lightsScript
 
     $Drivers = @($Body.drivers | Where-Object { $_ })
     if ($Drivers.Count -gt 0) {
@@ -1002,43 +1004,80 @@ $DriversConfig = @()
 $DriversStatus = @()
 
 if (Test-Path $DriversConfigFile) {
-    try { $DriversConfig = @(Get-Content $DriversConfigFile -Raw | ConvertFrom-Json) } catch { }
+    # Windows PowerShell 5.1 returns a top-level JSON array as one object:
+    # enumerate it explicitly.
+    try { $DriversConfig = @((Get-Content $DriversConfigFile -Raw | ConvertFrom-Json) | ForEach-Object { $_ }) } catch { }
 }
 
+# Original .inf names of the driver packages in the Windows driver store.
+function Get-StoreInfNames {
+    $Names = New-Object 'System.Collections.Generic.HashSet[string]'
+
+    foreach ($Line in @(& pnputil.exe /enum-drivers 2>$null)) {
+        if ("$Line" -match '([\w.-]+\.inf)\s*$') { [void]$Names.Add($Matches[1].ToLowerInvariant()) }
+    }
+
+    return $Names
+}
+
+# Two kinds of drivers: "printer" (zip, e.g. DNP DS620: also registered with
+# the spooler) and "device" (separate files, e.g. CH341 for the Arduino).
 function Install-PrinterDrivers {
 
     $Results = @()
+    $StoreInfs = $null
 
-    foreach ($Driver in @($script:DriversConfig | Where-Object { $_ -and $_.printerDriverName })) {
+    foreach ($Driver in @($script:DriversConfig | Where-Object { $_ -and $_.id })) {
 
-        $Result = [ordered]@{ name = $Driver.printerDriverName; installed = $false; error = $null }
+        $IsPrinter = $Driver.kind -ne "device" -and $Driver.printerDriverName
+        $Name = if ($Driver.printerDriverName) { $Driver.printerDriverName } else { $Driver.name }
+        $Result = [ordered]@{ name = $Name; installed = $false; error = $null }
 
         try {
-            if (Get-PrinterDriver -Name $Driver.printerDriverName -ErrorAction SilentlyContinue) {
+            if ($IsPrinter) {
+                $Installed = [bool](Get-PrinterDriver -Name $Driver.printerDriverName -ErrorAction SilentlyContinue)
+            }
+            else {
+                if (-not $StoreInfs) { $StoreInfs = Get-StoreInfNames }
+                $Installed = $StoreInfs.Contains("$($Driver.infName)".ToLowerInvariant())
+            }
+
+            if ($Installed) {
                 $Result.installed = $true
                 $Results += [PSCustomObject]$Result
                 continue
             }
 
             $Work = "$AgentDir\drivers\$($Driver.id)"
-            $Zip = "$Work.zip"
-            New-Item -ItemType Directory -Path "$AgentDir\drivers" -Force | Out-Null
+            Remove-Item $Work -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $Work -Force | Out-Null
 
-            Write-Log "Driver $($Driver.printerDriverName) missing: downloading"
-            Invoke-WebRequest -Uri $Driver.url -OutFile $Zip -TimeoutSec 600 -UseBasicParsing -ErrorAction Stop
+            Write-Log "Driver $Name missing: downloading"
 
-            $Hash = (Get-FileHash -Path $Zip -Algorithm SHA256).Hash
-            if ($Hash -ne $Driver.sha256) {
-                throw "zip fingerprint mismatch ($Hash), refused"
+            if ($Driver.files) {
+                foreach ($File in @($Driver.files)) {
+                    $Path = Join-Path $Work $File.name
+                    Invoke-WebRequest -Uri $File.url -OutFile $Path -TimeoutSec 300 -UseBasicParsing -ErrorAction Stop
+
+                    $Hash = (Get-FileHash -Path $Path -Algorithm SHA256).Hash
+                    if ($Hash -ne $File.sha256) { throw "$($File.name) fingerprint mismatch ($Hash), refused" }
+                }
+            }
+            else {
+                $Zip = "$Work.zip"
+                Invoke-WebRequest -Uri $Driver.url -OutFile $Zip -TimeoutSec 600 -UseBasicParsing -ErrorAction Stop
+
+                $Hash = (Get-FileHash -Path $Zip -Algorithm SHA256).Hash
+                if ($Hash -ne $Driver.sha256) { throw "zip fingerprint mismatch ($Hash), refused" }
+
+                Expand-Archive -Path $Zip -DestinationPath $Work -Force
+                Remove-Item $Zip -Force -ErrorAction SilentlyContinue
             }
 
-            Remove-Item $Work -Recurse -Force -ErrorAction SilentlyContinue
-            Expand-Archive -Path $Zip -DestinationPath $Work -Force
-
             $Inf = Join-Path $Work $Driver.inf
-            if (-not (Test-Path $Inf)) { throw "driver file not found in zip: $($Driver.inf)" }
+            if (-not (Test-Path $Inf)) { throw "driver file not found: $($Driver.inf)" }
 
-            # Every catalog of the package must be validly signed by the vendor.
+            # Every catalog of the package must be validly signed by the expected signer.
             $Signers = @()
             foreach ($Cat in Get-ChildItem -Path (Split-Path $Inf) -Filter *.cat -File) {
                 $Signature = Get-AuthenticodeSignature -FilePath $Cat.FullName
@@ -1052,18 +1091,20 @@ function Install-PrinterDrivers {
             # software?", which nobody can answer from session 0 (pnputil then
             # fails with 0xE0000242). Trusting the vendor's verified signing
             # certificate, as "always trust" in that dialog would, avoids it.
-            $Store = New-Object Security.Cryptography.X509Certificates.X509Store("TrustedPublisher", "LocalMachine")
-            $Store.Open("ReadWrite")
-            try {
-                foreach ($Cert in $Signers) {
-                    if (-not ($Store.Certificates | Where-Object { $_.Thumbprint -eq $Cert.Thumbprint })) {
-                        $Store.Add($Cert)
-                        Write-Log "Trusted publisher added: $($Cert.Subject.Split(',')[0]) ($($Cert.Thumbprint))"
+            if ($Driver.trustPublisher) {
+                $Store = New-Object Security.Cryptography.X509Certificates.X509Store("TrustedPublisher", "LocalMachine")
+                $Store.Open("ReadWrite")
+                try {
+                    foreach ($Cert in $Signers) {
+                        if (-not ($Store.Certificates | Where-Object { $_.Thumbprint -eq $Cert.Thumbprint })) {
+                            $Store.Add($Cert)
+                            Write-Log "Trusted publisher added: $($Cert.Subject.Split(',')[0]) ($($Cert.Thumbprint))"
+                        }
                     }
                 }
-            }
-            finally {
-                $Store.Close()
+                finally {
+                    $Store.Close()
+                }
             }
 
             $Output = & pnputil.exe /add-driver "$Inf" /install 2>&1
@@ -1071,18 +1112,18 @@ function Install-PrinterDrivers {
                 throw "pnputil failed ($LASTEXITCODE): $(($Output | Select-Object -Last 3) -join ' ')"
             }
 
-            # Make the print driver available to the spooler (queue created
-            # automatically by Windows when the printer is plugged in).
-            Add-PrinterDriver -Name $Driver.printerDriverName -ErrorAction Stop
+            # Printer drivers must also be known to the spooler (the queue is
+            # then created by Windows when the printer is plugged in).
+            if ($IsPrinter) { Add-PrinterDriver -Name $Driver.printerDriverName -ErrorAction Stop }
 
             $Result.installed = $true
-            Write-Log "Driver $($Driver.printerDriverName) installed"
+            Write-Log "Driver $Name installed"
 
-            Remove-Item $Work, $Zip -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item $Work -Recurse -Force -ErrorAction SilentlyContinue
         }
         catch {
             $Result.error = $_.Exception.Message
-            Write-Log "Driver $($Driver.printerDriverName) error: $($_.Exception.Message)"
+            Write-Log "Driver $Name error: $($_.Exception.Message)"
         }
 
         $Results += [PSCustomObject]$Result
@@ -1193,6 +1234,84 @@ function Install-StartScreenVideo {
     $script:StartScreenStatus = [PSCustomObject]@{
         app     = if ($Targets.Count) { $Targets[0].app } else { $null }
         targets = $Results
+    }
+}
+
+# --------------------------------------------------
+# LIGHTS SCRIPT
+# --------------------------------------------------
+
+# dslrBooth "trigger application" (from booth-config) that drives the lights
+# through the Arduino. Written to the path event_generator configures, with
+# the booth's actual Arduino COM port instead of the template's, and rewritten
+# as soon as the Arduino shows up on another COM port.
+$LightsScript = $null
+$LightsTemplate = $null
+$LightsStatus = $null
+
+# COM port of the Arduino: a plugged-in board first, otherwise the last one
+# Windows remembers (unplugged right now).
+function Get-ArduinoCom {
+    param($Arduino)
+
+    $Boards = @($Arduino | Where-Object { $_ -and $_.com -and -not $_.driverMissing })
+    $Plugged = $Boards | Where-Object { $_.present } | Select-Object -First 1
+    if ($Plugged) { return $Plugged.com }
+
+    $Known = $Boards | Select-Object -First 1
+    if ($Known) { return $Known.com }
+
+    return $null
+}
+
+function Install-LightsScript {
+    param($Arduino)
+
+    $Config = $script:LightsScript
+    if (-not $Config -or -not $Config.url) { return }
+
+    if (-not $script:LightsTemplate) {
+        $Cache = "$AgentDir\media\DSLR_Tiggers.bat"
+        New-Item -ItemType Directory -Path (Split-Path $Cache) -Force | Out-Null
+
+        if (-not (Test-Path $Cache) -or (Get-FileHash -Path $Cache -Algorithm SHA256).Hash -ne $Config.sha256) {
+            Invoke-WebRequest -Uri $Config.url -OutFile "$Cache.new" -TimeoutSec 60 -UseBasicParsing -ErrorAction Stop
+
+            $Hash = (Get-FileHash -Path "$Cache.new" -Algorithm SHA256).Hash
+            if ($Hash -ne $Config.sha256) {
+                Remove-Item "$Cache.new" -Force -ErrorAction SilentlyContinue
+                throw "lights script fingerprint mismatch ($Hash), refused"
+            }
+
+            Move-Item -Path "$Cache.new" -Destination $Cache -Force
+        }
+
+        $script:LightsTemplate = [IO.File]::ReadAllText($Cache, (New-Object Text.UTF8Encoding $false))
+    }
+
+    $Com = Get-ArduinoCom -Arduino $Arduino
+    $Content = $script:LightsTemplate
+
+    # Keep the template's port when no Arduino was ever seen on this PC.
+    if ($Com) {
+        $Content = [regex]::Replace($Content, '(?im)^(\s*set\s+PORTNUMBER=)COM\d+', "`${1}$Com")
+    }
+
+    $Current = $null
+    if (Test-Path $Config.path) { $Current = [IO.File]::ReadAllText($Config.path, (New-Object Text.UTF8Encoding $false)) }
+
+    if ($Current -ne $Content) {
+        New-Item -ItemType Directory -Path (Split-Path $Config.path) -Force | Out-Null
+        [IO.File]::WriteAllText($Config.path, $Content, (New-Object Text.UTF8Encoding $false))
+        Write-Log "Lights script written: $($Config.path) (port $(if ($Com) { $Com } else { 'from template' }))"
+    }
+
+    $Port = [regex]::Match($Content, '(?im)^\s*set\s+PORTNUMBER=(COM\d+)').Groups[1].Value
+
+    $script:LightsStatus = [PSCustomObject]@{
+        path        = $Config.path
+        com         = $Port
+        arduinoSeen = [bool]$Com
     }
 }
 
@@ -1324,7 +1443,7 @@ catch {
 # dashboard or Drive cannot be reached. A booth without a type in the
 # dashboard keeps checking its config hourly, to pick it up once it is set.
 $BoothType = $null
-$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false }
+$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false }
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
 
@@ -1342,7 +1461,7 @@ while ($true) {
     $LastLoopTime = Get-Date
 
     if ($Gap -gt 10) {
-        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false }
+        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false }
         $NextSetupTry = Get-Date
 
         try {
@@ -1401,7 +1520,7 @@ while ($true) {
         }
     }
 
-    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video) -and (Get-Date) -ge $NextSetupTry) {
+    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights) -and (Get-Date) -ge $NextSetupTry) {
 
         $NextSetupTry = (Get-Date).AddMinutes(5)
 
@@ -1427,7 +1546,12 @@ while ($true) {
             catch { Write-Log "Welcome video error: $($_.Exception.Message)" }
         }
 
-        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video) {
+        if ($SetupDone.config -and -not $SetupDone.lights) {
+            try { Install-LightsScript -Arduino $Status.arduino; $SetupDone.lights = $true }
+            catch { Write-Log "Lights script error: $($_.Exception.Message)" }
+        }
+
+        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights) {
             Write-Log "Booth setup done (type: $BoothType)"
             $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
         }
@@ -1443,6 +1567,14 @@ while ($true) {
         }
         catch {
             Write-Log "Booth config error: $($_.Exception.Message)"
+        }
+    }
+
+    if ($SetupDone.lights -and $LightsStatus -and $Status) {
+        $Com = Get-ArduinoCom -Arduino $Status.arduino
+        if ($Com -and $Com -ne $LightsStatus.com) {
+            try { Install-LightsScript -Arduino $Status.arduino }
+            catch { Write-Log "Lights script error: $($_.Exception.Message)" }
         }
     }
 

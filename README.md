@@ -162,3 +162,13 @@ asset id `photoboothparis` used by event_generator). It is cached under
 `C:\ProgramData\PhotoboothAgent\media`, so a software update wiping it is fixed at the
 next power-on without downloading again. To change the video: upload it to Drive and
 update its id, SHA-256 and size.
+
+### Lights (Arduino)
+
+`LIGHTS_SCRIPT` (`lib/printer-alerts.js`): the dslrBooth trigger script
+(`DSLR_Tiggers.bat`, "PROJET LUMIERES" Drive folder) that sends `set_brightness N` to
+the Arduino at each step of a session. event_generator points dslrBooth to
+`C:\dslrBooth\PROJET_LUMIERES\DSLR_Tiggers.bat`; the agent writes it there at power-on
+with the booth's actual Arduino COM port (template: COM6), and rewrites it within 30 s
+when the Arduino shows up on another COM port. `DEVICE_DRIVERS` installs the CH341
+USB-serial driver of the Arduino clones (WHQL) on every booth when missing.

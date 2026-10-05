@@ -318,6 +318,17 @@ function fontsNote(fonts) {
     badge(`${missing.length} police${missing.length > 1 ? "s" : ""} manquante${missing.length > 1 ? "s" : ""}`, "warn"));
 }
 
+// dslrBooth lights script, written with the Arduino's COM port (agent >= 1.18.0).
+function lightsNote(lights, boards) {
+  if (!lights) return null;
+  const plugged = asList(boards).find((b) => b.present && b.com && !b.driverMissing);
+  if (plugged && plugged.com !== lights.com) {
+    return el("div", { title: lights.path }, badge(`Lumières sur ${lights.com}, Arduino sur ${plugged.com}`, "bad"));
+  }
+  return el("div", { class: "hint", title: lights.path },
+    lights.arduinoSeen ? `Lumières : ${lights.com}` : `Lumières : ${lights.com} (Arduino jamais vue)`);
+}
+
 // Network used to reach the internet (agent >= 1.7.0).
 const NETWORK_TYPES = { ethernet: "Câble", wifi: "Wi-Fi", cellular: "4G/5G", other: "Autre" };
 
@@ -411,7 +422,7 @@ function boothRow(booth) {
       state,
       el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
     el("td", {}, networkCell(s)),
-    el("td", {}, arduinoCell(s.arduino)),
+    el("td", {}, arduinoCell(s.arduino), lightsNote(s.lights, s.arduino)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
