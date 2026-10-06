@@ -499,6 +499,7 @@ function Get-AgentStatus {
         drivers           = $DriversStatus
         startScreenVideo  = $StartScreenStatus
         lights            = $(Get-LightsState -Arduino $Arduino)
+        lightsDiag        = $(try { Get-LightsDiagnostics -Arduino $Arduino } catch { $null })
         kiosk             = $KioskStatus
         installs          = $InstallStatus
         cleanup           = $CleanupStatus
@@ -1424,6 +1425,56 @@ function Get-LightsState {
                       $(if ($Config.content) { "$($Config.content)" -eq $script:LightsTemplate } else { $script:LightsTemplateSource -eq $Config.url })
         arduinoSeen = [bool](Get-ArduinoCom -Arduino $Arduino)
     }
+}
+
+# Lights troubleshooting, read only, at most once a minute: what dslrBooth's
+# log says about the trigger application, the Arduino COM port settings
+# ("mode COMx" without arguments only prints them) and who may read/run the
+# lights script.
+$LightsDiag = $null
+$LightsDiagTime = [datetime]::MinValue
+
+function Get-LightsDiagnostics {
+    param($Arduino)
+
+    if ($script:LightsDiag -and ((Get-Date) - $script:LightsDiagTime).TotalSeconds -lt 60) { return $script:LightsDiag }
+
+    $TriggerLog = @()
+    foreach ($Log in Get-ChildItem -Path "$UsersRoot\*\AppData\Roaming\dslrBooth\Logs\dslrbooth.log" -ErrorAction SilentlyContinue) {
+        try {
+            $Stream = [IO.File]::Open($Log.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            try {
+                $Stream.Seek([Math]::Max(0, $Stream.Length - 262144), [IO.SeekOrigin]::Begin) | Out-Null
+                $Tail = (New-Object IO.StreamReader($Stream)).ReadToEnd()
+            }
+            finally { $Stream.Dispose() }
+
+            $TriggerLog += @($Tail -split "`r?`n" |
+                Where-Object { $_ -match 'UserTrigger|Trigger Application|DSLR_Tiggers|PROJET_LUMIERES' } |
+                Select-Object -Last 8)
+        }
+        catch { $TriggerLog += "cannot read $($Log.FullName): $($_.Exception.Message)" }
+    }
+
+    $Port = $null
+    $Com = Get-ArduinoCom -Arduino $Arduino
+    if ($Com) {
+        $Port = @(& "$env:WINDIR\System32\mode.com" $Com 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -notmatch '^-+$' })
+    }
+
+    $Acl = $null
+    if ($script:LightsScript -and (Test-Path $script:LightsScript.path)) {
+        $Acl = @(& "$env:WINDIR\System32\icacls.exe" $script:LightsScript.path 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -notmatch 'Successfully processed' })
+    }
+
+    $script:LightsDiag = [PSCustomObject]@{
+        at         = (Get-Date).ToUniversalTime().ToString("o")
+        triggerLog = $TriggerLog
+        port       = $Port
+        acl        = $Acl
+    }
+    $script:LightsDiagTime = Get-Date
+    return $script:LightsDiag
 }
 
 # --------------------------------------------------
