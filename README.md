@@ -90,7 +90,7 @@ downloads `agent/agent.ps1` from that exact commit, checks it parses, replaces i
 restarts (no reboot, no installer). So for every agent change:
 
 1. Bump `VERSION` (e.g. `1.4.0` → `1.5.0`) in the same commit as the agent change.
-2. Push to `main`. Booths pick it up within `$UpdateCheckInterval` (5 min normally, 15 s while testing) once Vercel has deployed (they read the deployed commit from `/api/version`, not from the rate-limited GitHub API); the dashboard shows each
+2. Push to `main`. Booths pick it up within `$UpdateCheckInterval` (5 min; set it to 15 s while testing) once Vercel has deployed (they read the deployed commit from `/api/version`, not from the rate-limited GitHub API); the dashboard shows each
    booth's agent version.
 
 Anyone who can push to `main` controls the code run as SYSTEM on every booth: keep

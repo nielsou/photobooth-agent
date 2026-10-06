@@ -10,8 +10,8 @@ $BoothId = $env:COMPUTERNAME
 $HeartbeatInterval = 30
 
 $Repo = "nielsou/photobooth-agent"
-# 15 s while testing; back to 300 (5 min) once the lights script works.
-$UpdateCheckInterval = 15
+# Self-update check (seconds); 15 while testing a change on the booths.
+$UpdateCheckInterval = 300
 
 # On power-on, print jobs older than this are leftovers from a previous event.
 $PurgeJobsOlderThanHours = 2
