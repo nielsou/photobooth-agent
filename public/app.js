@@ -293,38 +293,6 @@ function arduinoCell(boards, lights) {
   }));
 }
 
-// Welcome video put where dslrBooth / LumaBooth expect it (agent >= 1.17.0).
-function videoNote(video) {
-  if (!video) return null;
-  const targets = asList(video.targets);
-  if (targets.length === 0) return el("div", { class: "hint" }, "Vidéo d'accueil : ni dslrBooth ni LumaBooth trouvé");
-  const failed = targets.filter((t) => !t.ok);
-  const title = targets.map((t) => `${t.ok ? "OK" : "ERREUR"} ${t.path}${t.error ? " : " + t.error : ""}`).join(" · ");
-  return failed.length === 0
-    ? el("div", { class: "hint", title }, `Vidéo d'accueil OK (${video.app})`)
-    : el("div", { title }, badge(`Vidéo d'accueil en erreur (${video.app})`, "bad"));
-}
-
-// Printer drivers the booth type needs (agent >= 1.15.0).
-function driversNotes(drivers) {
-  return asList(drivers).map((d) => d.installed
-    ? el("div", { class: "hint" }, `Pilote ${d.name} installé`)
-    : d.manual
-      ? el("div", { title: "Pas installé automatiquement : à installer à la main" }, badge(`Pilote ${d.name} manquant (à installer à la main)`, "warn"))
-      : el("div", { title: d.error || "" }, badge(`Pilote ${d.name} ${d.error ? "en erreur" : "manquant"}`, d.error ? "bad" : "warn")));
-}
-
-// Fonts from the shared Drive folder (agent >= 1.14.0).
-function fontsNote(fonts) {
-  if (!fonts) return null;
-  const missing = asList(fonts.missing);
-  if (missing.length === 0) {
-    return el("div", { class: "hint", title: `${fonts.expected} polices vérifiées le ${formatDate(fonts.checkedAt)}` }, "Polices à jour");
-  }
-  return el("div", { title: `Non installées : ${missing.join(", ")}` },
-    badge(`${missing.length} police${missing.length > 1 ? "s" : ""} manquante${missing.length > 1 ? "s" : ""}`, "warn"));
-}
-
 // What is wrong with the lights script, or null.
 function lightsError(lights, boards) {
   if (!lights) return null;
@@ -346,9 +314,17 @@ function lightsNote(lights, boards) {
   return el("div", { class: "hint", title }, error ? "Erreur de script" : "Script OK");
 }
 
-// dslrBooth / LumaBooth (agent >= 1.20.0): version, start with Windows, and
-// the window right now (fullscreen expected during an event).
-const AUTOSTART_SOURCES = { run: "Registre Run", startup: "Dossier Démarrage", task: "Tâche planifiée" };
+// "Programmes" column: one line per thing the agent installs or checks,
+// a green check when it is fine, a red cross when it is not.
+function check(ok, text, title, ...extra) {
+  return el("li", { class: "check", title: title || "" },
+    el("span", { class: `mark ${ok ? "ok" : "bad"}` }, ok ? "✓" : "✗"),
+    el("span", {}, text),
+    ...extra);
+}
+
+// dslrBooth / LumaBooth window right now (agent >= 1.20.0): fullscreen is
+// expected during an event.
 const WINDOW_STATES = {
   fullscreen: ["Plein écran", "ok"],
   maximized: ["Maximisé", "ok"],
@@ -357,48 +333,53 @@ const WINDOW_STATES = {
   hidden: ["Caché", "warn"],
 };
 
-function softwareCell(software, type) {
-  if (software === undefined) return el("span", { class: "hint" }, "?");
-
-  const apps = asList(software);
-  if (apps.length === 0) return el("span", { class: "hint" }, "Ni dslrBooth ni LumaBooth");
-
-  return el("ul", { class: "printers" }, ...apps.map((app) => {
-    const entries = asList(app.autostart);
-    const enabled = entries.filter((e) => e.enabled);
-    const title = entries.length
-      ? entries.map((e) => `${e.enabled ? "" : "(désactivé) "}${AUTOSTART_SOURCES[e.source] || e.source}`
-          + `${e.scope && e.scope !== "all" ? ` ${e.scope}` : ""} : ${e.name}${e.maximized ? " (maximisé)" : ""} → ${e.command}`).join("\n")
-      : "Aucun lancement au démarrage de Windows (Run, dossier Démarrage, tâche planifiée)";
-
-    // The mother station is not a booth: no need to start the software.
-    const missingKind = type === "Station mère" ? "warn" : "bad";
-    const autostart = enabled.length
-      ? badge(enabled.some((e) => e.maximized) ? "Démarrage auto (maximisé)" : "Démarrage auto", "ok")
-      : badge(entries.length ? "Démarrage auto désactivé" : "Pas de démarrage auto", missingKind);
-    autostart.title = title;
-
-    const [label, kind] = !app.running ? ["Fermé", "warn"]
-      : WINDOW_STATES[app.window] || ["Ouvert", "ok"];
-    const windowBadge = badge(label, kind);
-    windowBadge.title = app.running
+function softwareChecks(software) {
+  return asList(software).map((app) => {
+    const [label, kind] = !app.running ? ["Fermé", "warn"] : WINDOW_STATES[app.window] || ["Ouvert", "ok"];
+    const title = app.running
       ? `Lancé le ${formatDate(app.startedAt)}${app.window ? "" : " (état de la fenêtre inconnu : popup helper absent)"}`
       : `${app.app} n'est pas lancé`;
+    return check(true, `${app.app} ${app.version || "?"}`, title, badge(label, kind));
+  });
+}
 
-    return el("li", {},
-      el("span", {}, `${app.app} ${app.version || "?"}`),
-      el("div", {}, autostart, " ", windowBadge));
-  }));
+// Fonts from the shared Drive folder (agent >= 1.14.0).
+function fontsCheck(fonts) {
+  if (!fonts) return null;
+  const missing = asList(fonts.missing);
+  return missing.length === 0
+    ? check(true, "Polices", `${fonts.expected} polices vérifiées le ${formatDate(fonts.checkedAt)}`)
+    : check(false, `Polices : ${missing.length} manquante${missing.length > 1 ? "s" : ""}`, `Non installées : ${missing.join(", ")}`);
+}
+
+// Drivers the booth type needs (agent >= 1.15.0); "manual" ones (Citizen)
+// are only checked (agent >= 1.22.0).
+function driverChecks(drivers) {
+  return asList(drivers).map((d) => d.installed
+    ? check(true, `Pilote ${d.name}`)
+    : d.manual
+      ? check(false, `Pilote ${d.name} : à installer à la main`, "Pas installé automatiquement par l'agent")
+      : check(false, `Pilote ${d.name} : ${d.error ? "erreur" : "manquant"}`, d.error || ""));
+}
+
+// Welcome video put where dslrBooth / LumaBooth expect it (agent >= 1.17.0).
+function videoCheck(video) {
+  if (!video) return null;
+  const targets = asList(video.targets);
+  if (targets.length === 0) return check(false, "Vidéo d'accueil : ni dslrBooth ni LumaBooth trouvé");
+  const title = targets.map((t) => `${t.ok ? "OK" : "ERREUR"} ${t.path}${t.error ? " : " + t.error : ""}`).join("\n");
+  return targets.every((t) => t.ok)
+    ? check(true, `Vidéo d'accueil (${video.app})`, title)
+    : check(false, `Vidéo d'accueil (${video.app}) : erreur`, title);
 }
 
 // Kiosk settings applied at power-on on booths (agent >= 1.22.0): no sleep,
 // lock, screensaver, notifications; startup shortcut maximized.
 const KIOSK_PARTS = { power: "veille et écran", updates: "redémarrages Windows Update", users: "écran de veille et notifications", shortcuts: "raccourci de démarrage" };
 
-function kioskNote(kiosk) {
+function kioskCheck(kiosk) {
   if (!kiosk) return null;
   const errors = asList(kiosk.errors);
-  const session = kiosk.autoLogon ? `session auto (${kiosk.autoLogon})` : "pas de session auto";
   const title = [
     `Appliqué le ${formatDate(kiosk.appliedAt)}`,
     ...asList(kiosk.done).map((part) => `OK : ${KIOSK_PARTS[part] || part}`),
@@ -406,14 +387,11 @@ function kioskNote(kiosk) {
     kiosk.shortcutsFixed ? `${kiosk.shortcutsFixed} raccourci(s) passé(s) en maximisé` : null,
     kiosk.autoLogon ? `Ouverture de session automatique : ${kiosk.autoLogon}` : "Pas d'ouverture de session automatique configurée",
   ].filter(Boolean).join("\n");
-
-  return errors.length
-    ? el("div", { title }, badge("Mode kiosque en erreur", "bad"))
-    : el("div", { class: "hint", title }, `Mode kiosque OK · ${session}`);
+  return check(errors.length === 0, errors.length ? "Mode kiosque : erreur" : "Mode kiosque", title);
 }
 
 // Apps and programs removed from booths at power-on (agent >= 1.25.0).
-function cleanupNote(cleanup) {
+function cleanupCheck(cleanup) {
   if (!cleanup) return null;
   const removed = asList(cleanup.removed);
   const errors = asList(cleanup.errors);
@@ -422,16 +400,30 @@ function cleanupNote(cleanup) {
     removed.length ? `Retiré : ${removed.join(", ")}` : "Rien à retirer",
     ...errors.map((error) => `ERREUR ${error}`),
   ].join("\n");
-
-  if (errors.length) return el("div", { title }, badge(`Nettoyage : ${errors.length} erreur${errors.length > 1 ? "s" : ""}`, "bad"));
-  return el("div", { class: "hint", title }, removed.length ? `Nettoyage : ${removed.length} retiré${removed.length > 1 ? "s" : ""}` : "Nettoyage OK");
+  const text = errors.length ? `Nettoyage : ${errors.length} erreur${errors.length > 1 ? "s" : ""}`
+    : removed.length ? `Nettoyage (${removed.length} retiré${removed.length > 1 ? "s" : ""})` : "Nettoyage";
+  return check(errors.length === 0, text, title);
 }
 
 // Programs the agent installs on booths when missing (agent >= 1.24.0).
-function installNotes(installs) {
+function installChecks(installs) {
   return asList(installs).map((p) => p.installed
-    ? el("div", { class: "hint" }, `${p.name} installé`)
-    : el("div", { title: p.error || "" }, badge(`${p.name} : installation en erreur`, "bad")));
+    ? check(true, p.name)
+    : check(false, `${p.name} : installation en erreur`, p.error || ""));
+}
+
+function programsCell(s) {
+  const items = [
+    ...softwareChecks(s.software),
+    check(Boolean(s.agentVersion), `Agent ${s.agentVersion || "?"}`),
+    fontsCheck(s.fonts),
+    ...driverChecks(s.drivers),
+    videoCheck(s.startScreenVideo),
+    kioskCheck(s.kiosk),
+    cleanupCheck(s.cleanup),
+    ...installChecks(s.installs),
+  ].filter(Boolean);
+  return el("ul", { class: "checks" }, ...items);
 }
 
 // Network used to reach the internet (agent >= 1.7.0).
@@ -531,8 +523,7 @@ function boothRow(booth) {
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
-    el("td", {}, softwareCell(s.software, booth.type), kioskNote(s.kiosk), cleanupNote(s.cleanup), ...installNotes(s.installs)),
-    el("td", { class: "nowrap" }, s.agentVersion || "?", fontsNote(s.fonts), ...driversNotes(s.drivers), videoNote(s.startScreenVideo)),
+    el("td", {}, programsCell(s)),
     el("td", {}, forget),
   );
 }

@@ -1678,6 +1678,12 @@ function Remove-Bloatware {
                     if (-not $Process.WaitForExit(300000)) { throw "uninstaller still running after 5 min" }
                 }
 
+                # Some uninstallers (NSIS: TeamViewer) hand over to a copy of
+                # themselves and return at once: give them 2 min to finish.
+                $Deadline = (Get-Date).AddMinutes(2)
+                while ((Get-UninstallEntries -Program $Program | Where-Object { $_.PSPath -eq $Entry.PSPath }) -and (Get-Date) -lt $Deadline) {
+                    Start-Sleep -Seconds 5
+                }
                 if (Get-UninstallEntries -Program $Program | Where-Object { $_.PSPath -eq $Entry.PSPath }) { throw "still installed after its uninstaller ran" }
                 $Removed += $Program.name
             }

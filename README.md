@@ -226,5 +226,5 @@ assets). To upgrade, change the URL and SHA-256.
 at every power-on the agent removes those Windows apps for every user and from the
 provisioned packages, and uninstalls those programs (per-user ones such as OneDrive
 from the user's session, through a one-shot scheduled task). Result in `cleanup`,
-shown in the "Logiciel" column. Kept on purpose: Edge, Store, codecs, Photos, Camera,
+shown in the "Programmes" column. TeamViewer (older booths) is removed too. Kept on purpose: Edge, Store, codecs, Photos, Camera,
 Notepad, Terminal, Snipping Tool, Quick Assist, Chrome Remote Desktop.
