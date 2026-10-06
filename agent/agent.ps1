@@ -503,6 +503,7 @@ function Get-AgentStatus {
         kiosk             = $KioskStatus
         installs          = $InstallStatus
         cleanup           = $CleanupStatus
+        hardware          = $(try { Get-HardwareInfo } catch { $null })
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
         printers          = $PrinterList
@@ -1484,6 +1485,66 @@ function Get-LightsDiagnostics {
     }
     $script:LightsDiagTime = Get-Date
     return $script:LightsDiag
+}
+
+# --------------------------------------------------
+# HARDWARE / BIOS
+# --------------------------------------------------
+
+# PC make and model, and whether the BIOS powers the PC on when the power
+# comes back ("After power loss" / "AC power recovery"). Only Dell, HP and
+# Lenovo expose their BIOS settings to Windows (WMI); on other makes the
+# setting cannot be read and is reported as null. Read once per agent start.
+$HardwareInfo = $null
+
+function Get-HardwareInfo {
+    if ($script:HardwareInfo) { return $script:HardwareInfo }
+
+    $System = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $Bios = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+    $Board = Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue
+
+    $Setting = $null
+    $Source = $null
+
+    # Lenovo: "AfterPowerLoss,Power On" (name varies with the model).
+    try {
+        $Item = Get-CimInstance -Namespace root\wmi -ClassName Lenovo_BiosSetting -ErrorAction Stop |
+            Where-Object { $_.CurrentSetting -match 'power\s*loss|ac\s*power|power\s*recovery' } | Select-Object -First 1
+        if ($Item) { $Setting = ($Item.CurrentSetting -split ',', 2)[1] -replace ';.*$', ''; $Source = "Lenovo: $(($Item.CurrentSetting -split ',')[0])" }
+    }
+    catch { }
+
+    # HP: "After Power Loss" = Power On / Power Off / Previous State.
+    if (-not $Source) {
+        try {
+            $Item = Get-CimInstance -Namespace root\HP\InstrumentedBIOS -ClassName HP_BIOSEnumeration -ErrorAction Stop |
+                Where-Object { $_.Name -match 'power\s*loss|ac\s*power|power\s*recovery' } | Select-Object -First 1
+            if ($Item) { $Setting = "$($Item.CurrentValue)"; $Source = "HP: $($Item.Name)" }
+        }
+        catch { }
+    }
+
+    # Dell (Dell Command | Configure or recent BIOS): "AC Power Recovery Mode".
+    if (-not $Source) {
+        try {
+            $Item = Get-CimInstance -Namespace root\dcim\sysman\biosattributes -ClassName EnumerationAttribute -ErrorAction Stop |
+                Where-Object { $_.AttributeName -match 'AcPwrRcvry|PowerRecovery|ACPower' } | Select-Object -First 1
+            if ($Item) { $Setting = "$($Item.CurrentValue)"; $Source = "Dell: $($Item.AttributeName)" }
+        }
+        catch { }
+    }
+
+    $script:HardwareInfo = [PSCustomObject]@{
+        manufacturer    = "$($System.Manufacturer)".Trim()
+        model           = "$($System.Model)".Trim()
+        board           = "$($Board.Manufacturer) $($Board.Product)".Trim()
+        biosVersion     = "$($Bios.SMBIOSBIOSVersion)".Trim()
+        # e.g. "Power On" / "Power Off" / "Last State"; null when not readable
+        acPowerRecovery = $(if ($Setting) { "$Setting".Trim() } else { $null })
+        source          = $Source
+    }
+    return $script:HardwareInfo
 }
 
 # --------------------------------------------------

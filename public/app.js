@@ -383,7 +383,7 @@ function check(ok, text, title, ...extra) {
   // Mark and text never split over two lines; only the badge may wrap.
   return el("li", { class: "check", title: title || "" },
     el("span", { class: "check-label" },
-      el("span", { class: `mark ${ok ? "ok" : "bad"}` }, ok ? "✓" : "✗"),
+      el("span", { class: `mark ${ok == null ? "unknown" : ok ? "ok" : "bad"}` }, ok == null ? "?" : ok ? "✓" : "✗"),
       " ",
       text),
     ...extra);
@@ -482,6 +482,19 @@ function installChecks(installs) {
     : check(false, `${p.name} : installation en erreur`, p.error || ""));
 }
 
+// BIOS "power on when the power comes back" (agent >= 1.32.0): readable
+// only on Dell, HP and Lenovo; "?" with the PC model otherwise.
+function biosCheck(hardware) {
+  if (!hardware) return null;
+  const model = [hardware.manufacturer, hardware.model].filter(Boolean).join(" ");
+  const value = hardware.acPowerRecovery;
+  if (!value) {
+    return check(null, "BIOS : redémarrage secteur à vérifier", `${model} : réglage du BIOS non lisible depuis Windows (seulement Dell, HP, Lenovo). À vérifier dans le BIOS : « Restore on AC power loss » = Power On.`);
+  }
+  const on = /\bon\b|enable/i.test(value) && !/off|disable|last|previous/i.test(value);
+  return check(on, on ? "BIOS : redémarre au retour du courant" : `BIOS : ne redémarre pas seul (${value})`, `${model} · ${hardware.source}`);
+}
+
 function programsCell(s) {
   const items = [
     ...softwareChecks(s.software),
@@ -492,6 +505,7 @@ function programsCell(s) {
     kioskCheck(s.kiosk),
     cleanupCheck(s.cleanup),
     ...installChecks(s.installs),
+    biosCheck(s.hardware),
   ].filter(Boolean);
   return el("ul", { class: "checks" }, ...items);
 }

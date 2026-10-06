@@ -168,6 +168,7 @@ button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
 .mark { display: inline-block; width: 1em; text-align: center; font-weight: 700; }
 .mark.ok { color: var(--ok); }
 .mark.bad { color: var(--bad); }
+.mark.unknown { color: var(--muted); }
 
 /* Phones: each printer on two lines (state + name / connection + queue). */
 @media (max-width: 700px) {
