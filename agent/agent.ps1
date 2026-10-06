@@ -1301,8 +1301,9 @@ function Install-LightsScript {
     if ($Config.content) {
         # Script sent by booth-config (agent >= 1.28.0, lib/lights-script.js).
         $script:LightsTemplate = "$($Config.content)"
+        $script:LightsTemplateSource = "content"
     }
-    elseif ($Config.url -and -not $script:LightsTemplate) {
+    elseif ($Config.url -and ($script:LightsTemplateSource -ne $Config.url -or -not $script:LightsTemplate)) {
         # Older config: template downloaded from Google Drive.
         $Cache = "$AgentDir\media\DSLR_Tiggers.bat"
         New-Item -ItemType Directory -Path (Split-Path $Cache) -Force | Out-Null
@@ -1320,6 +1321,7 @@ function Install-LightsScript {
         }
 
         $script:LightsTemplate = [IO.File]::ReadAllText($Cache, (New-Object Text.UTF8Encoding $false))
+        $script:LightsTemplateSource = $Config.url
     }
 
     if (-not $script:LightsTemplate) { return }
@@ -1415,7 +1417,10 @@ function Get-LightsState {
         min         = $Min
         max         = $Max
         missing     = $Missing
-        ok          = (-not $Missing) -and ($Text -eq (Get-LightsContent -Arduino $Arduino))
+        # Also not ok when booth-config switched to another template (repo
+        # script / Drive file, or a new repo script): rewrite from it.
+        ok          = (-not $Missing) -and ($Text -eq (Get-LightsContent -Arduino $Arduino)) -and
+                      $(if ($Config.content) { "$($Config.content)" -eq $script:LightsTemplate } else { $script:LightsTemplateSource -eq $Config.url })
         arduinoSeen = [bool](Get-ArduinoCom -Arduino $Arduino)
     }
 }

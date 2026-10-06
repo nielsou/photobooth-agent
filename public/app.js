@@ -287,6 +287,8 @@ function arduinoCell(boards, lights, smartFlash) {
     const [label, kind] = !board.present ? ["Débranchée", "warn"]
       : board.driverMissing ? ["Pilote manquant", "bad"]
       : scriptError ? ["Erreur de script", "bad"]
+      // Original script (no SMART_FLASH_ACTIVATED line): no on/off to show.
+      : lights && lights.smartFlash == null ? ["Branchée", "ok"]
       : (lights?.smartFlash ?? smartFlash) === false ? ["Fixe", "ok"]
       : ["Modulable", "ok"];
     return el("li", { title: `${board.name || "?"} (${board.usbId || "?"})` },
@@ -302,6 +304,8 @@ function arduinoCell(boards, lights, smartFlash) {
 function smartFlashSwitch(booth, onDone = refresh) {
   const s = booth.status || {};
   if (!s.lights && asList(s.arduino).length === 0) return null;
+  // Original script (no SMART_FLASH_ACTIVATED line): the switch would do nothing.
+  if (s.lights && s.lights.smartFlash == null) return null;
 
   const input = el("input", {
     type: "checkbox",
