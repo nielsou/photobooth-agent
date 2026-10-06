@@ -1505,6 +1505,78 @@ function Get-BoothSoftware {
 }
 
 # --------------------------------------------------
+# INVENTORY
+# --------------------------------------------------
+
+# Installed programs (uninstall entries) and Windows apps (Appx, installed and
+# provisioned for new users), sent once per power-on to /api/inventory: too
+# big for the 30 s heartbeat. Used to decide what to remove from the booths.
+function Get-Inventory {
+    $Programs = @(Get-ItemProperty -Path @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "Registry::HKEY_USERS\*\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        ) -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -and -not $_.SystemComponent -and -not $_.ParentKeyName } |
+        ForEach-Object {
+            [PSCustomObject]@{
+                name      = "$($_.DisplayName)"
+                version   = "$($_.DisplayVersion)"
+                publisher = "$($_.Publisher)"
+                scope     = $(if ($_.PSPath -match 'HKEY_USERS') { "user" } else { "machine" })
+            }
+        } | Sort-Object name, version -Unique)
+
+    $Apps = @()
+    $Provisioned = @()
+    $Errors = @()
+
+    try { $Apps = @(Get-AppxPackage -AllUsers -ErrorAction Stop |
+        Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage } |
+        ForEach-Object {
+            [PSCustomObject]@{
+                name         = $_.Name
+                version      = "$($_.Version)"
+                signature    = "$($_.SignatureKind)"
+                nonRemovable = [bool]$_.NonRemovable
+            }
+        } | Sort-Object name -Unique) }
+    catch { $Errors += "apps: $($_.Exception.Message)" }
+
+    try { $Provisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop | ForEach-Object { $_.DisplayName } | Sort-Object -Unique) }
+    catch { $Errors += "provisioned: $($_.Exception.Message)" }
+
+    return [PSCustomObject]@{
+        boothId     = $BoothId
+        at          = (Get-Date).ToUniversalTime().ToString("o")
+        windows     = "$((Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption) $([Environment]::OSVersion.Version)"
+        programs    = $Programs
+        apps        = $Apps
+        provisioned = $Provisioned
+        errors      = $Errors
+    }
+}
+
+function Send-Inventory {
+    $Config = Get-AgentConfig
+    if (-not $Config) { return }
+
+    $Json = Get-Inventory | ConvertTo-Json -Depth 4 -Compress
+
+    Invoke-RestMethod `
+        -Uri "$($Config.apiUrl.TrimEnd('/'))/api/inventory" `
+        -Method Post `
+        -Headers @{ Authorization = "Bearer $($Config.agentToken)" } `
+        -ContentType "application/json; charset=utf-8" `
+        -Body ([Text.Encoding]::UTF8.GetBytes($Json)) `
+        -TimeoutSec 60 `
+        -UseBasicParsing `
+        -ErrorAction Stop | Out-Null
+
+    Write-Log "Inventory sent ($([int]($Json.Length / 1024)) KB)"
+}
+
+# --------------------------------------------------
 # KIOSK SETTINGS
 # --------------------------------------------------
 
@@ -1762,7 +1834,7 @@ catch {
 # dashboard or Drive cannot be reached. A booth without a type in the
 # dashboard keeps checking its config hourly, to pick it up once it is set.
 $BoothType = $null
-$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false }
+$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; inventory = $false }
 $NextLightsFix = Get-Date
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
@@ -1781,7 +1853,7 @@ while ($true) {
     $LastLoopTime = Get-Date
 
     if ($Gap -gt 10) {
-        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false }
+        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; inventory = $false }
         $NextSetupTry = Get-Date
 
         try {
@@ -1840,7 +1912,7 @@ while ($true) {
         }
     }
 
-    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk) -and (Get-Date) -ge $NextSetupTry) {
+    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk -and $SetupDone.inventory) -and (Get-Date) -ge $NextSetupTry) {
 
         $NextSetupTry = (Get-Date).AddMinutes(5)
 
@@ -1875,12 +1947,18 @@ while ($true) {
             $SetupDone.kiosk = $true
         }
 
+        # After the kiosk step, so that what it removed is no longer listed.
+        if ($SetupDone.config -and $SetupDone.kiosk -and -not $SetupDone.inventory) {
+            try { Send-Inventory; $SetupDone.inventory = $true }
+            catch { Write-Log "Inventory error: $($_.Exception.Message)" }
+        }
+
         if ($SetupDone.config -and -not $SetupDone.lights) {
             try { Install-LightsScript -Arduino $Status.arduino; $SetupDone.lights = $true }
             catch { Write-Log "Lights script error: $($_.Exception.Message)" }
         }
 
-        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk) {
+        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk -and $SetupDone.inventory) {
             Write-Log "Booth setup done (type: $BoothType)"
             $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
         }

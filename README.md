@@ -204,3 +204,10 @@ this public repository.
 
 The Citizen CZ-01 driver (Cinebooth 150) is listed with `kind: "check"`: the agent
 only reports whether it is installed, the dashboard shows "à installer à la main".
+
+### Inventory
+
+At power-on (after the kiosk step) the agent sends the installed programs
+(uninstall entries), Windows apps (Appx, all users) and provisioned apps to
+`POST /api/inventory` (stored per booth, `GET /api/inventory` to read them): too big
+for the 30 s heartbeat. Used to decide what to remove from the booths.
