@@ -267,11 +267,15 @@ Ce choix ne pourra plus être modifié dans le dashboard.`)) {
 
 // Arduino boards seen as USB serial ports (agent >= 1.13.0). The COM number
 // matters to the booth software; without its driver a board has no COM port.
-function arduinoCell(boards) {
+// Smart Flash (Arduino) column. A wrong lights script turns the board's
+// badge red, "Erreur de script".
+function arduinoCell(boards, lights) {
   if (boards === undefined) return el("span", { class: "hint" }, "?");
 
   const list = asList(boards);
   if (list.length === 0) return el("span", { class: "hint", title: "Aucune carte Arduino vue par Windows" }, "Aucune");
+
+  const scriptError = lightsError(lights, list);
 
   // Same layout as the printers: state badge first, then the port.
   const plugged = list.filter((board) => board.present);
@@ -280,6 +284,7 @@ function arduinoCell(boards) {
   return el("ul", { class: "printers" }, ...shown.map((board) => {
     const [label, kind] = !board.present ? ["Débranchée", "warn"]
       : board.driverMissing ? ["Pilote manquant", "bad"]
+      : scriptError ? ["Erreur de script", "bad"]
       : ["Branchée", "ok"];
     return el("li", { title: `${board.name || "?"} (${board.usbId || "?"})` },
       badge(label, kind),
@@ -318,26 +323,25 @@ function fontsNote(fonts) {
     badge(`${missing.length} police${missing.length > 1 ? "s" : ""} manquante${missing.length > 1 ? "s" : ""}`, "warn"));
 }
 
-// dslrBooth lights script, written with the Arduino's COM port (agent >= 1.18.0).
-// From 1.19.0 the agent reads the port back from the file on disk at every
-// heartbeat (com) and compares it with the Arduino's (expected, ok).
-function lightsNote(lights, boards) {
+// What is wrong with the lights script, or null.
+function lightsError(lights, boards) {
   if (!lights) return null;
-  const title = lights.path;
-
-  if (lights.missing) return el("div", { title }, badge("Script lumières absent", "bad"));
+  if (lights.missing) return "script absent";
 
   let expected = lights.expected;
   if (expected === undefined) {
     const plugged = asList(boards).find((b) => b.present && b.com && !b.driverMissing);
     expected = plugged ? plugged.com : lights.com;
   }
+  if (lights.com !== expected) return `script sur ${lights.com || "aucun port"}, carte sur ${expected}`;
+  return null;
+}
 
-  if (lights.com !== expected) {
-    return el("div", { title }, badge(`Lumières : ${lights.com || "pas de port"} ≠ Arduino ${expected}`, "bad"));
-  }
-  return el("div", { class: "hint", title },
-    lights.arduinoSeen ? `Script on ${lights.com}` : `Script on ${lights.com} (Arduino jamais vue)`);
+function lightsNote(lights, boards) {
+  if (!lights) return null;
+  const error = lightsError(lights, boards);
+  const title = `${lights.path}${lights.com ? ` (${lights.com})` : ""}${error ? ` : ${error}` : ""}`;
+  return el("div", { class: "hint", title }, error ? "Erreur de script" : "Script OK");
 }
 
 // dslrBooth / LumaBooth (agent >= 1.20.0): version, start with Windows, and
@@ -478,7 +482,7 @@ function boothRow(booth) {
       state,
       el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
     el("td", {}, networkCell(s)),
-    el("td", {}, arduinoCell(s.arduino), lightsNote(s.lights, s.arduino)),
+    el("td", {}, arduinoCell(s.arduino, s.lights), lightsNote(s.lights, s.arduino)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
