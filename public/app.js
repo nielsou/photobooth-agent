@@ -268,9 +268,10 @@ Ce choix ne pourra plus être modifié dans le dashboard.`)) {
 
 // Arduino boards seen as USB serial ports (agent >= 1.13.0). The COM number
 // matters to the booth software; without its driver a board has no COM port.
-// Smart Flash (Arduino) column. A wrong lights script turns the board's
-// badge red, "Erreur de script".
-function arduinoCell(boards, lights) {
+// Smart Flash (Arduino) column. A plugged board says how the lights work:
+// "Modulable" (Smart Flash on) or "Fixe" (always 100 %), as written in the
+// booth's script when known; a wrong lights script turns it red.
+function arduinoCell(boards, lights, smartFlash) {
   if (boards === undefined) return el("span", { class: "hint" }, "?");
 
   const list = asList(boards);
@@ -286,7 +287,8 @@ function arduinoCell(boards, lights) {
     const [label, kind] = !board.present ? ["Débranchée", "warn"]
       : board.driverMissing ? ["Pilote manquant", "bad"]
       : scriptError ? ["Erreur de script", "bad"]
-      : ["Branchée", "ok"];
+      : (lights?.smartFlash ?? smartFlash) === false ? ["Fixe", "ok"]
+      : ["Modulable", "ok"];
     return el("li", { title: `${board.name || "?"} (${board.usbId || "?"})` },
       badge(label, kind),
       el("span", {}, board.com || board.name || "?"),
@@ -574,7 +576,7 @@ function boothRow(booth) {
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
       state,
       el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
-    el("td", {}, smartFlashSwitch(booth), arduinoCell(s.arduino, s.lights), lightsNote(s.lights, s.arduino)),
+    el("td", {}, smartFlashSwitch(booth), arduinoCell(s.arduino, s.lights, booth.smartFlash), lightsNote(s.lights, s.arduino)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
