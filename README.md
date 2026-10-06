@@ -219,3 +219,12 @@ uninstall entry matches `detect`, the agent downloads the official installer, re
 it unless its SHA-256 matches, runs it silently and checks the result (dashboard,
 "Logiciel" column). Currently Notepad++ (GitHub release, digest from the release
 assets). To upgrade, change the URL and SHA-256.
+
+### Apps removed from booths
+
+`REMOVE_APPS` / `REMOVE_PROGRAMS` (`lib/printer-alerts.js`), sent to kiosk booths only:
+at every power-on the agent removes those Windows apps for every user and from the
+provisioned packages, and uninstalls those programs (per-user ones such as OneDrive
+from the user's session, through a one-shot scheduled task). Result in `cleanup`,
+shown in the "Logiciel" column. Kept on purpose: Edge, Store, codecs, Photos, Camera,
+Notepad, Terminal, Snipping Tool, Quick Assist, Chrome Remote Desktop.

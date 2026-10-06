@@ -500,6 +500,7 @@ function Get-AgentStatus {
         lights            = $(Get-LightsState -Arduino $Arduino)
         kiosk             = $KioskStatus
         installs          = $InstallStatus
+        cleanup           = $CleanupStatus
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
         printers          = $PrinterList
@@ -703,6 +704,8 @@ function Update-BoothConfig {
     $script:LightsScript = $Body.lightsScript
     $script:Kiosk = [bool]$Body.kiosk
     $script:InstallPrograms = @($Body.installPrograms | Where-Object { $_ })
+    $script:RemoveApps = @($Body.removeApps | Where-Object { $_ })
+    $script:RemovePrograms = @($Body.removePrograms | Where-Object { $_ })
 
     $Drivers = @($Body.drivers | Where-Object { $_ })
     if ($Drivers.Count -gt 0) {
@@ -1575,6 +1578,123 @@ function Install-Programs {
 }
 
 # --------------------------------------------------
+# APPS REMOVAL
+# --------------------------------------------------
+
+# Windows apps and programs booth-config lists for removal (kiosk booths only:
+# Xbox, Office hub, Teams, OneDrive, Copilot, news...). Run at every power-on,
+# since a Windows update may bring some back; nothing to do the next times.
+# Apps are removed for every user and from the provisioned packages. Per-user
+# programs (OneDrive) are uninstalled from the user's session, through a
+# one-shot scheduled task: their uninstaller only acts on the user running it.
+$RemoveApps = @()
+$RemovePrograms = @()
+$CleanupStatus = $null
+
+# Splits an uninstall command line into the program and its arguments.
+function Split-CommandLine {
+    param([string]$Command)
+
+    $Command = $Command.Trim()
+    if ($Command -match '^"([^"]+)"\s*(.*)$') { return @($Matches[1], $Matches[2]) }
+    if ($Command -match '^(.+?\.exe)\s*(.*)$') { return @($Matches[1], $Matches[2]) }
+    return @($Command, "")
+}
+
+function Get-UninstallEntries {
+    param($Program)
+
+    @(Get-ItemProperty -Path @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "Registry::HKEY_USERS\*\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        ) -ErrorAction SilentlyContinue |
+        Where-Object { "$($_.DisplayName)" -match $Program.detect -and "$($_.Publisher)" -match "$($Program.publisher)" })
+}
+
+function Invoke-AsUser {
+    param([string]$Sid, [string]$Command)
+
+    $User = (New-Object Security.Principal.SecurityIdentifier $Sid).Translate([Security.Principal.NTAccount]).Value
+    $Exe, $ArgList = Split-CommandLine $Command
+    $Name = "Photobooth Agent Uninstall"
+
+    $Action = if ($ArgList) { New-ScheduledTaskAction -Execute $Exe -Argument $ArgList } else { New-ScheduledTaskAction -Execute $Exe }
+    $Principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $Name -Action $Action -Principal $Principal -Force | Out-Null
+
+    try {
+        Start-ScheduledTask -TaskName $Name
+        $Deadline = (Get-Date).AddMinutes(3)
+        do {
+            Start-Sleep -Seconds 3
+            $State = (Get-ScheduledTask -TaskName $Name).State
+        } while ($State -eq "Running" -and (Get-Date) -lt $Deadline)
+
+        # 267011 = the task has not run (user not logged on): next power-on.
+        if ((Get-ScheduledTaskInfo -TaskName $Name).LastTaskResult -eq 267011) { throw "$User is not logged on" }
+    }
+    finally {
+        Unregister-ScheduledTask -TaskName $Name -Confirm:$false -ErrorAction SilentlyContinue
+    }
+}
+
+function Remove-Bloatware {
+    $Removed = @()
+    $Errors = @()
+    $Names = @($script:RemoveApps | Where-Object { $_ })
+
+    if ($Names.Count -gt 0) {
+        foreach ($Package in @(Get-AppxPackage -AllUsers -ErrorAction Stop | Where-Object { $_.Name -in $Names })) {
+            try {
+                Remove-AppxPackage -Package $Package.PackageFullName -AllUsers -ErrorAction Stop
+                $Removed += $Package.Name
+            }
+            catch { $Errors += "$($Package.Name): $($_.Exception.Message)" }
+        }
+
+        foreach ($Package in @(Get-AppxProvisionedPackage -Online -ErrorAction Stop | Where-Object { $_.DisplayName -in $Names })) {
+            try {
+                Remove-AppxProvisionedPackage -Online -PackageName $Package.PackageName -ErrorAction Stop | Out-Null
+                $Removed += $Package.DisplayName
+            }
+            catch { $Errors += "$($Package.DisplayName) (provisioned): $($_.Exception.Message)" }
+        }
+    }
+
+    foreach ($Program in @($script:RemovePrograms | Where-Object { $_ -and $_.detect })) {
+        foreach ($Entry in Get-UninstallEntries -Program $Program) {
+            try {
+                $Command = if ($Entry.QuietUninstallString) { "$($Entry.QuietUninstallString)" } else { "$($Entry.UninstallString) $($Program.extraArgs)" }
+                if (-not $Command.Trim()) { throw "no uninstall command" }
+
+                if ($Entry.PSPath -match 'HKEY_USERS\\([^\\]+)\\') {
+                    Invoke-AsUser -Sid $Matches[1] -Command $Command
+                }
+                else {
+                    $Exe, $ArgList = Split-CommandLine $Command
+                    $Process = if ($ArgList) { Start-Process -FilePath $Exe -ArgumentList $ArgList -PassThru -WindowStyle Hidden }
+                        else { Start-Process -FilePath $Exe -PassThru -WindowStyle Hidden }
+                    if (-not $Process.WaitForExit(300000)) { throw "uninstaller still running after 5 min" }
+                }
+
+                if (Get-UninstallEntries -Program $Program | Where-Object { $_.PSPath -eq $Entry.PSPath }) { throw "still installed after its uninstaller ran" }
+                $Removed += $Program.name
+            }
+            catch { $Errors += "$($Program.name): $($_.Exception.Message)" }
+        }
+    }
+
+    $Removed = @($Removed | Sort-Object -Unique)
+    $script:CleanupStatus = [PSCustomObject]@{
+        at      = (Get-Date).ToUniversalTime().ToString("o")
+        removed = $Removed
+        errors  = $Errors
+    }
+    Write-Log "Apps removal: $($Removed.Count) removed$(if ($Removed) { " ($($Removed -join ', '))" })$(if ($Errors) { "; errors: $($Errors -join ' | ')" })"
+}
+
+# --------------------------------------------------
 # INVENTORY
 # --------------------------------------------------
 
@@ -2013,6 +2133,9 @@ while ($true) {
             if ($Kiosk) {
                 try { Set-KioskSettings }
                 catch { Write-Log "Kiosk settings error: $($_.Exception.Message)" }
+
+                try { Remove-Bloatware }
+                catch { Write-Log "Apps removal error: $($_.Exception.Message)" }
             }
             $SetupDone.kiosk = $true
         }

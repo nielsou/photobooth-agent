@@ -412,6 +412,21 @@ function kioskNote(kiosk) {
     : el("div", { class: "hint", title }, `Mode kiosque OK · ${session}`);
 }
 
+// Apps and programs removed from booths at power-on (agent >= 1.25.0).
+function cleanupNote(cleanup) {
+  if (!cleanup) return null;
+  const removed = asList(cleanup.removed);
+  const errors = asList(cleanup.errors);
+  const title = [
+    `Vérifié le ${formatDate(cleanup.at)}`,
+    removed.length ? `Retiré : ${removed.join(", ")}` : "Rien à retirer",
+    ...errors.map((error) => `ERREUR ${error}`),
+  ].join("\n");
+
+  if (errors.length) return el("div", { title }, badge(`Nettoyage : ${errors.length} erreur${errors.length > 1 ? "s" : ""}`, "bad"));
+  return el("div", { class: "hint", title }, removed.length ? `Nettoyage : ${removed.length} retiré${removed.length > 1 ? "s" : ""}` : "Nettoyage OK");
+}
+
 // Programs the agent installs on booths when missing (agent >= 1.24.0).
 function installNotes(installs) {
   return asList(installs).map((p) => p.installed
@@ -516,7 +531,7 @@ function boothRow(booth) {
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
-    el("td", {}, softwareCell(s.software, booth.type), kioskNote(s.kiosk), ...installNotes(s.installs)),
+    el("td", {}, softwareCell(s.software, booth.type), kioskNote(s.kiosk), cleanupNote(s.cleanup), ...installNotes(s.installs)),
     el("td", { class: "nowrap" }, s.agentVersion || "?", fontsNote(s.fonts), ...driversNotes(s.drivers), videoNote(s.startScreenVideo)),
     el("td", {}, forget),
   );

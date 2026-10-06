@@ -63,6 +63,7 @@ const booths = {
         lights: { path: "C:/dslrBooth/PROJET_LUMIERES/DSLR_Tiggers.bat", com: "COM6", arduinoSeen: true },
         kiosk: { appliedAt: now, done: ["power", "users"], errors: ["shortcuts: boom"], shortcutsFixed: 1, autoLogon: "booth" },
         installs: [{ name: "Notepad++", installed: true, error: null }, { name: "X", installed: false, error: "boom" }],
+        cleanup: { at: now, removed: ["Microsoft.BingNews"], errors: ["OneDrive: boom"] },
         software: [
           { app: "dslrBooth", version: "7.49.3.1", running: true, startedAt: now, window: "fullscreen",
             autostart: [{ source: "startup", scope: "booth", name: "dslrBooth.lnk", command: "C:/dslrBooth.exe", maximized: true, enabled: true }] },
