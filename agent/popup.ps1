@@ -163,7 +163,10 @@ function Minimize-Alert {
 }
 
 # dslrBooth / LumaBooth window state for the dashboard: the agent runs in
-# session 0 and cannot see this session's windows, so tell it every 15 s.
+# session 0 and cannot see this session's windows, so tell it (every 3 s).
+# During its first minute, a booth software window left "windowed" is
+# maximized (it ignores the shortcut's "Maximized"); after that it is left
+# alone, so it can still be resized by hand.
 $BoothWindowFile = "$env:PUBLIC\PhotoboothAgent\booth-window.json"
 
 Add-Type -TypeDefinition @"
@@ -178,6 +181,8 @@ public static class BoothWindow {
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, int flags);
     [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO info);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    public static void Maximize(IntPtr h) { ShowWindow(h, 3); }
     public static string State(IntPtr h) {
         if (h == IntPtr.Zero || !IsWindowVisible(h)) return "hidden";
         if (IsIconic(h)) return "minimized";
@@ -196,9 +201,17 @@ function Save-BoothWindow {
     $Apps = @(Get-Process -ErrorAction SilentlyContinue |
         Where-Object { $_.ProcessName -match '^(dslrBooth|LumaBooth)' -and $_.MainWindowHandle -ne 0 } |
         ForEach-Object {
+            $WindowState = [BoothWindow]::State($_.MainWindowHandle)
+
+            $Age = try { ((Get-Date) - $_.StartTime).TotalSeconds } catch { 999 }
+            if ($WindowState -eq "normal" -and $Age -lt 60) {
+                [BoothWindow]::Maximize($_.MainWindowHandle)
+                $WindowState = [BoothWindow]::State($_.MainWindowHandle)
+            }
+
             [PSCustomObject]@{
                 app   = $(if ($_.ProcessName -match '^dslrBooth') { "dslrBooth" } else { "LumaBooth" })
-                state = [BoothWindow]::State($_.MainWindowHandle)
+                state = $WindowState
             }
         })
 
@@ -208,7 +221,7 @@ function Save-BoothWindow {
 }
 
 $WindowTimer = New-Object Windows.Threading.DispatcherTimer
-$WindowTimer.Interval = [TimeSpan]::FromSeconds(15)
+$WindowTimer.Interval = [TimeSpan]::FromSeconds(3)
 $WindowTimer.Add_Tick({ try { Save-BoothWindow } catch { } })
 $WindowTimer.Start()
 try { Save-BoothWindow } catch { }
