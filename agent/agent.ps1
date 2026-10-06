@@ -1460,6 +1460,15 @@ function Get-LightsDiagnostics {
     $Com = Get-ArduinoCom -Arduino $Arduino
     if ($Com) {
         $Port = @(& "$env:WINDIR\System32\mode.com" $Com 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -notmatch '^-+$' })
+
+        # The rewritten lights script (1.28) set DTR=OFF and the driver keeps
+        # it: the original script does not set DTR, and the card stopped
+        # reacting. Put the port back to its normal DTR=ON.
+        if ($Port | Where-Object { $_ -match 'DTR' -and $_ -match 'OFF\s*$' }) {
+            & "$env:WINDIR\System32\mode.com" $Com DTR=ON 2>&1 | Out-Null
+            Write-Log "$Com was left with DTR=OFF: set back to DTR=ON"
+            $Port = @(& "$env:WINDIR\System32\mode.com" $Com 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -notmatch '^-+$' })
+        }
     }
 
     $Acl = $null
