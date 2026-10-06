@@ -823,7 +823,7 @@ function smartFlashRow(booth) {
   }, "Enregistrer");
 
   const inScript = Number.isInteger(lights.min)
-    ? `MIN ${lights.min} · MAX ${lights.max} · ${lights.smartFlash === false ? "OFF" : "ON"}`
+    ? `MIN ${lights.min} · MAX ${lights.max}${lights.smartFlash == null ? "" : lights.smartFlash ? " · ON" : " · OFF"}`
     : "pas encore remonté";
   const pending = Number.isInteger(lights.min) && (
     (Number.isInteger(wanted.min) && wanted.min !== lights.min) ||
