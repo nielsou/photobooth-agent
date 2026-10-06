@@ -288,6 +288,7 @@ function arduinoCell(boards, lights, smartFlash) {
       : board.driverMissing ? ["Pilote manquant", "bad"]
       : scriptError ? ["Erreur de script", "bad"]
       : lightsFixed(lights, smartFlash) ? ["Fixe", "ok"]
+      : Number.isInteger(lights?.min) && Number.isInteger(lights?.max) ? [`${lights.min} → ${lights.max}`, "ok"]
       : ["Modulable", "ok"];
     return el("li", { title: `${board.name || "?"} (${board.usbId || "?"})` },
       badge(label, kind),
