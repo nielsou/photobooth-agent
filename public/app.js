@@ -342,6 +342,51 @@ function lightsNote(lights, boards) {
   return el("div", { title }, badge(`Lumières : ${lights.com} ✓`, "ok"));
 }
 
+// dslrBooth / LumaBooth (agent >= 1.20.0): version, start with Windows, and
+// the window right now (fullscreen expected during an event).
+const AUTOSTART_SOURCES = { run: "Registre Run", startup: "Dossier Démarrage", task: "Tâche planifiée" };
+const WINDOW_STATES = {
+  fullscreen: ["Plein écran", "ok"],
+  maximized: ["Maximisé", "ok"],
+  normal: ["Fenêtré", "warn"],
+  minimized: ["Réduit", "warn"],
+  hidden: ["Caché", "warn"],
+};
+
+function softwareCell(software, type) {
+  if (software === undefined) return el("span", { class: "hint" }, "?");
+
+  const apps = asList(software);
+  if (apps.length === 0) return el("span", { class: "hint" }, "Ni dslrBooth ni LumaBooth");
+
+  return el("ul", { class: "printers" }, ...apps.map((app) => {
+    const entries = asList(app.autostart);
+    const enabled = entries.filter((e) => e.enabled);
+    const title = entries.length
+      ? entries.map((e) => `${e.enabled ? "" : "(désactivé) "}${AUTOSTART_SOURCES[e.source] || e.source}`
+          + `${e.scope && e.scope !== "all" ? ` ${e.scope}` : ""} : ${e.name}${e.maximized ? " (maximisé)" : ""} → ${e.command}`).join("\n")
+      : "Aucun lancement au démarrage de Windows (Run, dossier Démarrage, tâche planifiée)";
+
+    // The mother station is not a booth: no need to start the software.
+    const missingKind = type === "Station mère" ? "warn" : "bad";
+    const autostart = enabled.length
+      ? badge(enabled.some((e) => e.maximized) ? "Démarrage auto (maximisé)" : "Démarrage auto", "ok")
+      : badge(entries.length ? "Démarrage auto désactivé" : "Pas de démarrage auto", missingKind);
+    autostart.title = title;
+
+    const [label, kind] = !app.running ? ["Fermé", "warn"]
+      : WINDOW_STATES[app.window] || ["Ouvert", "ok"];
+    const windowBadge = badge(label, kind);
+    windowBadge.title = app.running
+      ? `Lancé le ${formatDate(app.startedAt)}${app.window ? "" : " (état de la fenêtre inconnu : popup helper absent)"}`
+      : `${app.app} n'est pas lancé`;
+
+    return el("li", {},
+      el("span", {}, `${app.app} ${app.version || "?"}`),
+      el("div", {}, autostart, " ", windowBadge));
+  }));
+}
+
 // Network used to reach the internet (agent >= 1.7.0).
 const NETWORK_TYPES = { ethernet: "Câble", wifi: "Wi-Fi", cellular: "4G/5G", other: "Autre" };
 
@@ -439,6 +484,7 @@ function boothRow(booth) {
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
+    el("td", {}, softwareCell(s.software, booth.type)),
     el("td", { class: "nowrap" }, s.agentVersion || "?", fontsNote(s.fonts), ...driversNotes(s.drivers), videoNote(s.startScreenVideo)),
     el("td", {}, forget),
   );

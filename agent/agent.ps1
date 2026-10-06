@@ -489,6 +489,7 @@ function Get-AgentStatus {
         drivers           = $DriversStatus
         startScreenVideo  = $StartScreenStatus
         lights            = $(Get-LightsState -Arduino $Arduino)
+        software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
@@ -1341,6 +1342,146 @@ function Get-LightsState {
         ok          = (-not $Missing) -and $Port -and ($Port -eq $Expected)
         arduinoSeen = [bool](Get-ArduinoCom -Arduino $Arduino)
     }
+}
+
+# --------------------------------------------------
+# BOOTH SOFTWARE
+# --------------------------------------------------
+
+# dslrBooth / LumaBooth: installed version, how it starts with Windows (Run
+# keys, Startup folders, scheduled tasks; "maximized" for a shortcut set to
+# open maximized) and its window right now. This agent runs in session 0 and
+# cannot see windows: the popup helper, in the user's session, writes the
+# window state to $BoothWindowFile every 15 s. Versions and startup entries
+# are read at most hourly (cheap enough, but no need every 30 s).
+$BoothApps = @("dslrBooth", "LumaBooth")
+$BoothWindowFile = "$env:PUBLIC\PhotoboothAgent\booth-window.json"
+$SoftwareCache = $null
+$SoftwareCacheTime = [datetime]::MinValue
+
+# Explorer's "Startup apps" switch: first byte odd = disabled.
+function Test-StartupApproved {
+    param([string]$Key, [string]$Name)
+
+    $Value = (Get-ItemProperty -Path $Key -Name $Name -ErrorAction SilentlyContinue).$Name
+    if (-not $Value) { return $true }
+    return -not ($Value[0] -band 1)
+}
+
+function Get-AutostartEntries {
+    $Entries = @()
+    $Shell = New-Object -ComObject WScript.Shell
+    $Approved = "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
+
+    # Real users' profiles and, when loaded (logged on), their registry hive.
+    $Profiles = @(Get-CimInstance Win32_UserProfile -Filter "Special=False" -ErrorAction SilentlyContinue | ForEach-Object {
+        $Hive = "Registry::HKEY_USERS\$($_.SID)"
+        [PSCustomObject]@{ user = (Split-Path $_.LocalPath -Leaf); path = $_.LocalPath; hive = $(if (Test-Path $Hive) { $Hive } else { $null }) }
+    })
+
+    $RunKeys = @(
+        @{ key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; approved = "HKLM:\$Approved\Run"; scope = "all" },
+        @{ key = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"; approved = "HKLM:\$Approved\Run32"; scope = "all" }
+    )
+    foreach ($P in $Profiles | Where-Object { $_.hive }) {
+        $RunKeys += @{ key = "$($P.hive)\Software\Microsoft\Windows\CurrentVersion\Run"; approved = "$($P.hive)\$Approved\Run"; scope = $P.user }
+    }
+
+    foreach ($Run in $RunKeys) {
+        $Values = Get-ItemProperty -Path $Run.key -ErrorAction SilentlyContinue
+        if (-not $Values) { continue }
+        foreach ($V in $Values.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' }) {
+            $Entries += [PSCustomObject]@{
+                source = "run"; scope = $Run.scope; name = $V.Name; command = "$($V.Value)"
+                maximized = $false; enabled = (Test-StartupApproved -Key $Run.approved -Name $V.Name)
+            }
+        }
+    }
+
+    $Folders = @(@{ path = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"; approved = "HKLM:\$Approved\StartupFolder"; scope = "all" })
+    foreach ($P in $Profiles) {
+        $Folders += @{ path = "$($P.path)\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"; approved = $(if ($P.hive) { "$($P.hive)\$Approved\StartupFolder" }); scope = $P.user }
+    }
+
+    foreach ($Folder in $Folders) {
+        foreach ($File in Get-ChildItem -Path $Folder.path -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' }) {
+            $Command = $File.FullName
+            $Maximized = $false
+
+            if ($File.Extension -eq '.lnk') {
+                try {
+                    $Link = $Shell.CreateShortcut($File.FullName)
+                    $Command = "$($Link.TargetPath) $($Link.Arguments)".Trim()
+                    $Maximized = $Link.WindowStyle -eq 3
+                }
+                catch { }
+            }
+            elseif ($File.Extension -in @('.bat', '.cmd') -and $File.Length -lt 65536) {
+                $Command = "$($File.FullName) : $((Get-Content $File.FullName -Raw -ErrorAction SilentlyContinue) -replace '\s+', ' ')"
+            }
+
+            $Entries += [PSCustomObject]@{
+                source = "startup"; scope = $Folder.scope; name = $File.Name; command = $Command
+                maximized = $Maximized; enabled = $(if ($Folder.approved) { Test-StartupApproved -Key $Folder.approved -Name $File.Name } else { $true })
+            }
+        }
+    }
+
+    foreach ($Task in Get-ScheduledTask -ErrorAction SilentlyContinue) {
+        $Command = ($Task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)".Trim() }) -join " ; "
+        if ($Command -notmatch ($BoothApps -join '|')) { continue }
+        $Entries += [PSCustomObject]@{
+            source = "task"; scope = $null; name = "$($Task.TaskPath)$($Task.TaskName)"; command = $Command
+            maximized = $false; enabled = ($Task.State -ne 'Disabled')
+        }
+    }
+
+    return $Entries
+}
+
+function Get-BoothSoftware {
+    if (-not $script:SoftwareCache -or ((Get-Date) - $script:SoftwareCacheTime).TotalMinutes -ge 60) {
+        $Uninstall = @(Get-ItemProperty -Path @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "Registry::HKEY_USERS\*\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        ) -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName })
+
+        $Autostart = @()
+        try { $Autostart = @(Get-AutostartEntries) } catch { Write-Log "Autostart check error: $($_.Exception.Message)" }
+
+        $script:SoftwareCache = @{ uninstall = $Uninstall; autostart = $Autostart }
+        $script:SoftwareCacheTime = Get-Date
+    }
+
+    $Windows = $null
+    try {
+        $W = Get-Content $BoothWindowFile -Raw -ErrorAction Stop | ConvertFrom-Json
+        if (((Get-Date).ToUniversalTime() - ([datetime]$W.at).ToUniversalTime()).TotalSeconds -lt 120) { $Windows = @($W.windows) }
+    }
+    catch { }
+
+    $Result = @()
+    foreach ($App in $BoothApps) {
+        $Entry = $script:SoftwareCache.uninstall | Where-Object { $_.DisplayName -match "^$App" } | Select-Object -First 1
+        $Proc = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "^$App" } | Select-Object -First 1
+        if (-not $Entry -and -not $Proc) { continue }
+
+        $Version = if ($Entry) { "$($Entry.DisplayVersion)" } elseif ($Proc.Path) { (Get-Item $Proc.Path).VersionInfo.FileVersion }
+        $Window = $Windows | Where-Object { $_.app -eq $App } | Select-Object -First 1
+
+        $Result += [PSCustomObject]@{
+            app         = $App
+            version     = $Version
+            running     = [bool]$Proc
+            startedAt   = $(if ($Proc) { try { $Proc.StartTime.ToUniversalTime().ToString("o") } catch { $null } } else { $null })
+            autostart   = @($script:SoftwareCache.autostart | Where-Object { "$($_.name) $($_.command)" -match $App })
+            # fullscreen / maximized / normal / minimized; null when the popup helper cannot tell
+            window      = $(if ($Window) { $Window.state } else { $null })
+        }
+    }
+
+    return ,$Result
 }
 
 # --------------------------------------------------

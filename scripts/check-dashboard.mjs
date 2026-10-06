@@ -61,6 +61,12 @@ const booths = {
         fonts: { expected: 23, missing: ["Amarillo.ttf"], checkedAt: now },
         drivers: [{ name: "DP-DS620", installed: true }, { name: "Other", installed: false, error: "boom" }],
         lights: { path: "C:/dslrBooth/PROJET_LUMIERES/DSLR_Tiggers.bat", com: "COM6", arduinoSeen: true },
+        software: [
+          { app: "dslrBooth", version: "7.49.3.1", running: true, startedAt: now, window: "fullscreen",
+            autostart: [{ source: "startup", scope: "booth", name: "dslrBooth.lnk", command: "C:/dslrBooth.exe", maximized: true, enabled: true }] },
+          { app: "LumaBooth", version: "1.2", running: false, startedAt: null, window: null,
+            autostart: [{ source: "run", scope: "all", name: "Luma", command: "luma.exe", maximized: false, enabled: false }] },
+        ],
         startScreenVideo: { app: "dslrBooth", targets: [{ app: "dslrBooth", path: "C:/booth/x.mp4", ok: false, error: "in use" }] },
         dnpDevices: [{ statusCode: 1300, mediaRemaining: 12 }],
         printers: [
@@ -71,7 +77,7 @@ const booths = {
       },
     },
     { boothId: "OFFLINE-OLD", type: null, online: false, ageSeconds: 9000, receivedAt: now,
-      status: { agentVersion: "1.2.0", internet: false, spooler: "Stopped", printers: [] } },
+      status: { agentVersion: "1.2.0", software: [], internet: false, spooler: "Stopped", printers: [] } },
     { boothId: "NO-STATUS", online: false, ageSeconds: null, receivedAt: null, status: null },
   ],
 };

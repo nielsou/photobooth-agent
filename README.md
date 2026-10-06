@@ -175,3 +175,16 @@ the port back from the file on disk and reports it (`lights.com`, `expected`, `o
 file was edited, deleted, or the Arduino moved to another COM port, the agent rewrites
 it within 30 s. `DEVICE_DRIVERS` installs the CH341
 USB-serial driver of the Arduino clones (WHQL) on every booth when missing.
+
+### Booth software (dslrBooth / LumaBooth)
+
+The agent reports each installed booth software (`software` in the status):
+version (Windows uninstall entry), whether it is running, how it starts with
+Windows (HKLM / user Run keys, common and user Startup folders, scheduled
+tasks; a shortcut set to "Maximized" is flagged, Explorer's "Startup apps"
+switch is honoured) and its window state. Versions and startup entries are read
+at most hourly. The window state (`fullscreen`, `maximized`, `normal`,
+`minimized`) comes from the popup helper, which runs in the user's session and
+writes `C:\Users\Public\PhotoboothAgent\booth-window.json` every 15 s (the agent,
+in session 0, cannot see windows). The dashboard's "Logiciel" column shows it;
+a missing autostart is red, except on the mother station.

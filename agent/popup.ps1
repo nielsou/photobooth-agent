@@ -162,6 +162,57 @@ function Minimize-Alert {
     Show-Badge
 }
 
+# dslrBooth / LumaBooth window state for the dashboard: the agent runs in
+# session 0 and cannot see this session's windows, so tell it every 15 s.
+$BoothWindowFile = "$env:PUBLIC\PhotoboothAgent\booth-window.json"
+
+Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public static class BoothWindow {
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+    [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int Size; public RECT Monitor; public RECT Work; public int Flags; }
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, int flags);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO info);
+    public static string State(IntPtr h) {
+        if (h == IntPtr.Zero || !IsWindowVisible(h)) return "hidden";
+        if (IsIconic(h)) return "minimized";
+        RECT r; GetWindowRect(h, out r);
+        MONITORINFO mi = new MONITORINFO(); mi.Size = Marshal.SizeOf(mi);
+        GetMonitorInfo(MonitorFromWindow(h, 2), ref mi);
+        bool caption = (GetWindowLong(h, -16) & 0x00C00000) == 0x00C00000;
+        if (!caption && r.L <= mi.Monitor.L && r.T <= mi.Monitor.T && r.R >= mi.Monitor.R && r.B >= mi.Monitor.B) return "fullscreen";
+        if (IsZoomed(h)) return "maximized";
+        return "normal";
+    }
+}
+"@
+
+function Save-BoothWindow {
+    $Apps = @(Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessName -match '^(dslrBooth|LumaBooth)' -and $_.MainWindowHandle -ne 0 } |
+        ForEach-Object {
+            [PSCustomObject]@{
+                app   = $(if ($_.ProcessName -match '^dslrBooth') { "dslrBooth" } else { "LumaBooth" })
+                state = [BoothWindow]::State($_.MainWindowHandle)
+            }
+        })
+
+    New-Item -ItemType Directory -Path (Split-Path $BoothWindowFile) -Force | Out-Null
+    [PSCustomObject]@{ at = (Get-Date).ToUniversalTime().ToString("o"); user = $env:USERNAME; windows = $Apps } |
+        ConvertTo-Json -Depth 3 | Set-Content -Path $BoothWindowFile -Encoding UTF8
+}
+
+$WindowTimer = New-Object Windows.Threading.DispatcherTimer
+$WindowTimer.Interval = [TimeSpan]::FromSeconds(15)
+$WindowTimer.Add_Tick({ try { Save-BoothWindow } catch { } })
+$WindowTimer.Start()
+try { Save-BoothWindow } catch { }
+
 $Window.FindName("OkButton").Add_Click({ Minimize-Alert })
 
 # Alt+F4 behaves like OK (a closed WPF window could not be shown again).
