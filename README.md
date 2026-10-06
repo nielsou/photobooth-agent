@@ -188,3 +188,19 @@ at most hourly. The window state (`fullscreen`, `maximized`, `normal`,
 writes `C:\Users\Public\PhotoboothAgent\booth-window.json` every 15 s (the agent,
 in session 0, cannot see windows). The dashboard's "Logiciel" column shows it;
 a missing autostart is red, except on the mother station.
+
+### Kiosk mode (booths only)
+
+`/api/booth-config` sends `kiosk: true` for every booth type except the mother
+station (`KIOSK_TYPES`). At power-on such a booth then: never sleeps, hibernates or
+turns its screen off, asks no sign-in on wake-up (powercfg, AC and DC); turns the
+screensaver off for every user, also as a user policy (hives of users who are not
+logged on are loaded); turns notifications and Windows tips/suggestions off; does not
+restart for Windows Update while someone is logged on; sets the dslrBooth/LumaBooth
+shortcuts of the Startup folders to "Maximized". The result is reported in `kiosk`
+(with the automatic sign-in user, read only) and shown in the "Logiciel" column.
+User passwords and automatic sign-in are not changed: that would need a password in
+this public repository.
+
+The Citizen CZ-01 driver (Cinebooth 150) is listed with `kind: "check"`: the agent
+only reports whether it is installed, the dashboard shows "à installer à la main".

@@ -498,6 +498,7 @@ function Get-AgentStatus {
         drivers           = $DriversStatus
         startScreenVideo  = $StartScreenStatus
         lights            = $(Get-LightsState -Arduino $Arduino)
+        kiosk             = $KioskStatus
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
         printers          = $PrinterList
@@ -699,6 +700,7 @@ function Update-BoothConfig {
     $script:BoothType = $Body.type
     $script:StartScreenVideo = $Body.startScreenVideo
     $script:LightsScript = $Body.lightsScript
+    $script:Kiosk = [bool]$Body.kiosk
 
     $Drivers = @($Body.drivers | Where-Object { $_ })
     if ($Drivers.Count -gt 0) {
@@ -1055,6 +1057,14 @@ function Install-PrinterDrivers {
 
             if ($Installed) {
                 $Result.installed = $true
+                $Results += [PSCustomObject]$Result
+                continue
+            }
+
+            # Driver the agent cannot install (e.g. Citizen CZ-01, unsigned
+            # InstallShield setup): only reported, to be installed by hand.
+            if ($Driver.kind -eq "check") {
+                $Result.manual = $true
                 $Results += [PSCustomObject]$Result
                 continue
             }
@@ -1495,6 +1505,136 @@ function Get-BoothSoftware {
 }
 
 # --------------------------------------------------
+# KIOSK SETTINGS
+# --------------------------------------------------
+
+# Booths (not the mother station: booth-config says "kiosk") must never
+# sleep, lock, show a screensaver, notifications or Windows tips, nor restart
+# for updates while logged on, and their booth software must start maximized.
+# Applied at power-on (idempotent), the result is reported in "kiosk".
+$Kiosk = $false
+$KioskStatus = $null
+
+# Runs $Action on the registry hive (Registry::HKEY_USERS\...) of each real
+# user profile, loading the hive of users who are not logged on.
+function Invoke-OnUserHives {
+    param([scriptblock]$Action)
+
+    foreach ($P in Get-CimInstance Win32_UserProfile -Filter "Special=False" -ErrorAction SilentlyContinue) {
+        $Hive = "Registry::HKEY_USERS\$($P.SID)"
+        $Loaded = $false
+
+        if (-not (Test-Path $Hive)) {
+            $Dat = Join-Path $P.LocalPath "NTUSER.DAT"
+            if (-not (Test-Path $Dat)) { continue }
+            & reg.exe load "HKU\PhotoboothAgentTmp" "$Dat" 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { continue }
+            $Hive = "Registry::HKEY_USERS\PhotoboothAgentTmp"
+            $Loaded = $true
+        }
+
+        try { & $Action $Hive }
+        finally {
+            if ($Loaded) {
+                [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+                & reg.exe unload "HKU\PhotoboothAgentTmp" 2>$null | Out-Null
+            }
+        }
+    }
+}
+
+function Set-RegistryValue {
+    param([string]$Path, [string]$Name, $Value, [string]$Type = "DWord")
+
+    if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+    New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+}
+
+function Set-KioskSettings {
+    $Errors = @()
+    $Done = @()
+
+    # Never sleep, hibernate or turn the screen off; no sign-in on wake-up.
+    try {
+        foreach ($Setting in @("standby-timeout", "hibernate-timeout", "monitor-timeout")) {
+            foreach ($Power in @("ac", "dc")) {
+                & powercfg.exe /change "$Setting-$Power" 0 | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "powercfg $Setting-$Power failed" }
+            }
+        }
+        & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0 | Out-Null
+        & powercfg.exe /setdcvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0 | Out-Null
+        & powercfg.exe /setactive SCHEME_CURRENT | Out-Null
+        $Done += "power"
+    }
+    catch { $Errors += "power: $($_.Exception.Message)" }
+
+    # No automatic restart for updates while someone is logged on.
+    try {
+        Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoRebootWithLoggedOnUsers" -Value 1
+        $Done += "updates"
+    }
+    catch { $Errors += "updates: $($_.Exception.Message)" }
+
+    # Per user: screensaver off (also as a policy, so it stays off),
+    # notifications and Windows tips/suggestions off.
+    try {
+        Invoke-OnUserHives -Action {
+            param($Hive)
+            Set-RegistryValue -Path "$Hive\Control Panel\Desktop" -Name "ScreenSaveActive" -Value "0" -Type String
+            Set-RegistryValue -Path "$Hive\Software\Policies\Microsoft\Windows\Control Panel\Desktop" -Name "ScreenSaveActive" -Value "0" -Type String
+            Set-RegistryValue -Path "$Hive\Software\Policies\Microsoft\Windows\Control Panel\Desktop" -Name "ScreenSaverIsSecure" -Value "0" -Type String
+            Set-RegistryValue -Path "$Hive\Software\Microsoft\Windows\CurrentVersion\PushNotifications" -Name "ToastEnabled" -Value 0
+            $Cdm = "$Hive\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+            foreach ($Name in @("SoftLandingEnabled", "SystemPaneSuggestionsEnabled", "SubscribedContent-338389Enabled", "SubscribedContent-310093Enabled", "SubscribedContent-338388Enabled")) {
+                Set-RegistryValue -Path $Cdm -Name $Name -Value 0
+            }
+            Set-RegistryValue -Path "$Hive\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" -Name "ScoobeSystemSettingEnabled" -Value 0
+        }
+        $Done += "users"
+    }
+    catch { $Errors += "users: $($_.Exception.Message)" }
+
+    # Booth software started maximized from the Startup folders.
+    $Fixed = 0
+    try {
+        $Shell = New-Object -ComObject WScript.Shell
+        $Folders = @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp") +
+            @(Get-CimInstance Win32_UserProfile -Filter "Special=False" -ErrorAction SilentlyContinue |
+                ForEach-Object { "$($_.LocalPath)\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup" })
+
+        foreach ($Link in Get-ChildItem -Path $Folders -Filter "*.lnk" -File -ErrorAction SilentlyContinue) {
+            $Shortcut = $Shell.CreateShortcut($Link.FullName)
+            if ("$($Link.Name) $($Shortcut.TargetPath)" -notmatch ($BoothApps -join '|')) { continue }
+            if ($Shortcut.WindowStyle -eq 3) { continue }
+
+            $Shortcut.WindowStyle = 3
+            $Shortcut.Save()
+            $Fixed++
+            Write-Log "Startup shortcut set to maximized: $($Link.FullName)"
+        }
+        $Done += "shortcuts"
+    }
+    catch { $Errors += "shortcuts: $($_.Exception.Message)" }
+
+    # Reported only: automatic sign-in at power-on.
+    $Winlogon = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -ErrorAction SilentlyContinue
+    $AutoLogon = if ("$($Winlogon.AutoAdminLogon)" -eq "1" -and $Winlogon.DefaultUserName) { "$($Winlogon.DefaultUserName)" } else { $null }
+
+    # Show the new shortcut state on the dashboard right away.
+    $script:SoftwareCache = $null
+
+    $script:KioskStatus = [PSCustomObject]@{
+        appliedAt         = (Get-Date).ToUniversalTime().ToString("o")
+        done              = $Done
+        errors            = $Errors
+        shortcutsFixed    = $Fixed
+        autoLogon         = $AutoLogon
+    }
+    Write-Log "Kiosk settings applied ($($Done -join ', '))$(if ($Errors) { " errors: $($Errors -join ' | ')" })"
+}
+
+# --------------------------------------------------
 # SELF-UPDATE
 # --------------------------------------------------
 
@@ -1622,7 +1762,7 @@ catch {
 # dashboard or Drive cannot be reached. A booth without a type in the
 # dashboard keeps checking its config hourly, to pick it up once it is set.
 $BoothType = $null
-$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false }
+$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false }
 $NextLightsFix = Get-Date
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
@@ -1641,7 +1781,7 @@ while ($true) {
     $LastLoopTime = Get-Date
 
     if ($Gap -gt 10) {
-        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false }
+        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false }
         $NextSetupTry = Get-Date
 
         try {
@@ -1700,7 +1840,7 @@ while ($true) {
         }
     }
 
-    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights) -and (Get-Date) -ge $NextSetupTry) {
+    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk) -and (Get-Date) -ge $NextSetupTry) {
 
         $NextSetupTry = (Get-Date).AddMinutes(5)
 
@@ -1726,12 +1866,21 @@ while ($true) {
             catch { Write-Log "Welcome video error: $($_.Exception.Message)" }
         }
 
+        # Local settings only: never retried, whatever happens.
+        if ($SetupDone.config -and -not $SetupDone.kiosk) {
+            if ($Kiosk) {
+                try { Set-KioskSettings }
+                catch { Write-Log "Kiosk settings error: $($_.Exception.Message)" }
+            }
+            $SetupDone.kiosk = $true
+        }
+
         if ($SetupDone.config -and -not $SetupDone.lights) {
             try { Install-LightsScript -Arduino $Status.arduino; $SetupDone.lights = $true }
             catch { Write-Log "Lights script error: $($_.Exception.Message)" }
         }
 
-        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights) {
+        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk) {
             Write-Log "Booth setup done (type: $BoothType)"
             $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
         }

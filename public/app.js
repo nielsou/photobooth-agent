@@ -309,7 +309,9 @@ function videoNote(video) {
 function driversNotes(drivers) {
   return asList(drivers).map((d) => d.installed
     ? el("div", { class: "hint" }, `Pilote ${d.name} installé`)
-    : el("div", { title: d.error || "" }, badge(`Pilote ${d.name} ${d.error ? "en erreur" : "manquant"}`, d.error ? "bad" : "warn")));
+    : d.manual
+      ? el("div", { title: "Pas installé automatiquement : à installer à la main" }, badge(`Pilote ${d.name} manquant (à installer à la main)`, "warn"))
+      : el("div", { title: d.error || "" }, badge(`Pilote ${d.name} ${d.error ? "en erreur" : "manquant"}`, d.error ? "bad" : "warn")));
 }
 
 // Fonts from the shared Drive folder (agent >= 1.14.0).
@@ -387,6 +389,27 @@ function softwareCell(software, type) {
       el("span", {}, `${app.app} ${app.version || "?"}`),
       el("div", {}, autostart, " ", windowBadge));
   }));
+}
+
+// Kiosk settings applied at power-on on booths (agent >= 1.22.0): no sleep,
+// lock, screensaver, notifications; startup shortcut maximized.
+const KIOSK_PARTS = { power: "veille et écran", updates: "redémarrages Windows Update", users: "écran de veille et notifications", shortcuts: "raccourci de démarrage" };
+
+function kioskNote(kiosk) {
+  if (!kiosk) return null;
+  const errors = asList(kiosk.errors);
+  const session = kiosk.autoLogon ? `session auto (${kiosk.autoLogon})` : "pas de session auto";
+  const title = [
+    `Appliqué le ${formatDate(kiosk.appliedAt)}`,
+    ...asList(kiosk.done).map((part) => `OK : ${KIOSK_PARTS[part] || part}`),
+    ...errors.map((error) => `ERREUR ${error}`),
+    kiosk.shortcutsFixed ? `${kiosk.shortcutsFixed} raccourci(s) passé(s) en maximisé` : null,
+    kiosk.autoLogon ? `Ouverture de session automatique : ${kiosk.autoLogon}` : "Pas d'ouverture de session automatique configurée",
+  ].filter(Boolean).join("\n");
+
+  return errors.length
+    ? el("div", { title }, badge("Mode kiosque en erreur", "bad"))
+    : el("div", { class: "hint", title }, `Mode kiosque OK · ${session}`);
 }
 
 // Network used to reach the internet (agent >= 1.7.0).
@@ -486,7 +509,7 @@ function boothRow(booth) {
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
-    el("td", {}, softwareCell(s.software, booth.type)),
+    el("td", {}, softwareCell(s.software, booth.type), kioskNote(s.kiosk)),
     el("td", { class: "nowrap" }, s.agentVersion || "?", fontsNote(s.fonts), ...driversNotes(s.drivers), videoNote(s.startScreenVideo)),
     el("td", {}, forget),
   );
