@@ -170,8 +170,7 @@ to come from the "PROJET LUMIERES" Drive folder). dslrBooth calls it at each ste
 session (`%1` = event, `%2` = countdown progress in percent) and it sends
 `set_brightness N` to the Arduino: MIN at rest, rising from MIN to MAX during the
 countdown, MAX for the capture. With `SMART_FLASH_ACTIVATED=FALSE` it always sends
-`FIXED_BRIGHTNESS` (100), for lights on a generator. The port is opened with
-`DTR=OFF` so the Arduino is not reset by each call.
+`FIXED_BRIGHTNESS` (100), for lights on a generator.
 
 event_generator points dslrBooth to `C:dslrBoothPROJET_LUMIERESDSLR_Tiggers.bat`; the
 agent writes it there with the booth's actual Arduino COM port, the Smart Flash
