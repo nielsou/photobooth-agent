@@ -403,8 +403,10 @@ function fontsCheck(fonts) {
 
 // Drivers the booth type needs (agent >= 1.15.0); "manual" ones (Citizen)
 // are only checked (agent >= 1.22.0).
+// The Arduino (CH341) driver is not listed: the Smart Flash badge already says
+// "Pilote manquant" when it is missing.
 function driverChecks(drivers) {
-  return asList(drivers).map((d) => d.installed
+  return asList(drivers).filter((d) => !/arduino/i.test(d.name || "")).map((d) => d.installed
     ? check(true, `Pilote ${d.name}`)
     : d.manual
       ? check(false, `Pilote ${d.name} : à installer à la main`, "Pas installé automatiquement par l'agent")
