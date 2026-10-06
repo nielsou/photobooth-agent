@@ -594,7 +594,7 @@ function boothRow(booth) {
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
       state,
       el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
-    el("td", {}, smartFlashSwitch(booth), arduinoCell(s.arduino, s.lights, booth.smartFlash), lightsNote(s.lights, s.arduino)),
+    el("td", {}, arduinoCell(s.arduino, s.lights, booth.smartFlash), lightsNote(s.lights, s.arduino)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
