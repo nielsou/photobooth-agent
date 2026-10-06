@@ -1585,8 +1585,9 @@ function Install-Programs {
 # Xbox, Office hub, Teams, OneDrive, Copilot, news...). Run at every power-on,
 # since a Windows update may bring some back; nothing to do the next times.
 # Apps are removed for every user and from the provisioned packages. Per-user
-# programs (OneDrive) are uninstalled from the user's session, through a
-# one-shot scheduled task: their uninstaller only acts on the user running it.
+# programs (OneDrive) are disabled rather than uninstalled: their uninstaller
+# would have to run in the user's session and may ask for admin rights on the
+# booth screen.
 $RemoveApps = @()
 $RemovePrograms = @()
 $CleanupStatus = $null
@@ -1610,33 +1611,6 @@ function Get-UninstallEntries {
             "Registry::HKEY_USERS\*\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
         ) -ErrorAction SilentlyContinue |
         Where-Object { "$($_.DisplayName)" -match $Program.detect -and "$($_.Publisher)" -match "$($Program.publisher)" })
-}
-
-function Invoke-AsUser {
-    param([string]$Sid, [string]$Command)
-
-    $User = (New-Object Security.Principal.SecurityIdentifier $Sid).Translate([Security.Principal.NTAccount]).Value
-    $Exe, $ArgList = Split-CommandLine $Command
-    $Name = "Photobooth Agent Uninstall"
-
-    $Action = if ($ArgList) { New-ScheduledTaskAction -Execute $Exe -Argument $ArgList } else { New-ScheduledTaskAction -Execute $Exe }
-    $Principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
-    Register-ScheduledTask -TaskName $Name -Action $Action -Principal $Principal -Force | Out-Null
-
-    try {
-        Start-ScheduledTask -TaskName $Name
-        $Deadline = (Get-Date).AddMinutes(3)
-        do {
-            Start-Sleep -Seconds 3
-            $State = (Get-ScheduledTask -TaskName $Name).State
-        } while ($State -eq "Running" -and (Get-Date) -lt $Deadline)
-
-        # 267011 = the task has not run (user not logged on): next power-on.
-        if ((Get-ScheduledTaskInfo -TaskName $Name).LastTaskResult -eq 267011) { throw "$User is not logged on" }
-    }
-    finally {
-        Unregister-ScheduledTask -TaskName $Name -Confirm:$false -ErrorAction SilentlyContinue
-    }
 }
 
 function Remove-Bloatware {
@@ -1668,15 +1642,34 @@ function Remove-Bloatware {
                 $Command = if ($Entry.QuietUninstallString) { "$($Entry.QuietUninstallString)" } else { "$($Entry.UninstallString) $($Program.extraArgs)" }
                 if (-not $Command.Trim()) { throw "no uninstall command" }
 
+                # Per-user programs (OneDrive): their uninstaller must run in the
+                # user's session and may ask for admin rights on screen. Disable
+                # them instead: machine policy, no autostart, process stopped.
                 if ($Entry.PSPath -match 'HKEY_USERS\\([^\\]+)\\') {
-                    Invoke-AsUser -Sid $Matches[1] -Command $Command
+                    $RunKey = "Registry::HKEY_USERS\$($Matches[1])\Software\Microsoft\Windows\CurrentVersion\Run"
+                    $Changed = $false
+
+                    if ($Program.policy -and (Get-ItemProperty -Path $Program.policy.path -Name $Program.policy.name -ErrorAction SilentlyContinue)."$($Program.policy.name)" -ne $Program.policy.value) {
+                        Set-RegistryValue -Path $Program.policy.path -Name $Program.policy.name -Value $Program.policy.value
+                        $Changed = $true
+                    }
+                    if ($Program.runValue -and (Get-ItemProperty -Path $RunKey -Name $Program.runValue -ErrorAction SilentlyContinue)) {
+                        Remove-ItemProperty -Path $RunKey -Name $Program.runValue -ErrorAction Stop
+                        $Changed = $true
+                    }
+                    if ($Program.process -and (Get-Process -Name $Program.process -ErrorAction SilentlyContinue)) {
+                        Stop-Process -Name $Program.process -Force -ErrorAction SilentlyContinue
+                        $Changed = $true
+                    }
+
+                    if ($Changed) { $Removed += "$($Program.name) (disabled)" }
+                    continue
                 }
-                else {
-                    $Exe, $ArgList = Split-CommandLine $Command
-                    $Process = if ($ArgList) { Start-Process -FilePath $Exe -ArgumentList $ArgList -PassThru -WindowStyle Hidden }
-                        else { Start-Process -FilePath $Exe -PassThru -WindowStyle Hidden }
-                    if (-not $Process.WaitForExit(300000)) { throw "uninstaller still running after 5 min" }
-                }
+
+                $Exe, $ArgList = Split-CommandLine $Command
+                $Process = if ($ArgList) { Start-Process -FilePath $Exe -ArgumentList $ArgList -PassThru -WindowStyle Hidden }
+                    else { Start-Process -FilePath $Exe -PassThru -WindowStyle Hidden }
+                if (-not $Process.WaitForExit(300000)) { throw "uninstaller still running after 5 min" }
 
                 # Some uninstallers (NSIS: TeamViewer) hand over to a copy of
                 # themselves and return at once: give them 2 min to finish.

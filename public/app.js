@@ -317,9 +317,12 @@ function lightsNote(lights, boards) {
 // "Programmes" column: one line per thing the agent installs or checks,
 // a green check when it is fine, a red cross when it is not.
 function check(ok, text, title, ...extra) {
+  // Mark and text never split over two lines; only the badge may wrap.
   return el("li", { class: "check", title: title || "" },
-    el("span", { class: `mark ${ok ? "ok" : "bad"}` }, ok ? "✓" : "✗"),
-    el("span", {}, text),
+    el("span", { class: "check-label" },
+      el("span", { class: `mark ${ok ? "ok" : "bad"}` }, ok ? "✓" : "✗"),
+      " ",
+      text),
     ...extra);
 }
 

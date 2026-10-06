@@ -163,6 +163,7 @@ button.small { font-size: 12px; padding: 3px 8px; color: var(--muted); }
 
 .checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
 .checks li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.check-label { white-space: nowrap; }
 .mark { display: inline-block; width: 1em; text-align: center; font-weight: 700; }
 .mark.ok { color: var(--ok); }
 .mark.bad { color: var(--bad); }
