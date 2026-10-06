@@ -211,3 +211,11 @@ At power-on (after the kiosk step) the agent sends the installed programs
 (uninstall entries), Windows apps (Appx, all users) and provisioned apps to
 `POST /api/inventory` (stored per booth, `GET /api/inventory` to read them): too big
 for the 30 s heartbeat. Used to decide what to remove from the booths.
+
+### Programs installed on booths
+
+`INSTALL_PROGRAMS` (`lib/printer-alerts.js`), sent to kiosk booths only: when no
+uninstall entry matches `detect`, the agent downloads the official installer, refuses
+it unless its SHA-256 matches, runs it silently and checks the result (dashboard,
+"Logiciel" column). Currently Notepad++ (GitHub release, digest from the release
+assets). To upgrade, change the URL and SHA-256.

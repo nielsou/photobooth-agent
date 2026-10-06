@@ -499,6 +499,7 @@ function Get-AgentStatus {
         startScreenVideo  = $StartScreenStatus
         lights            = $(Get-LightsState -Arduino $Arduino)
         kiosk             = $KioskStatus
+        installs          = $InstallStatus
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
         printers          = $PrinterList
@@ -701,6 +702,7 @@ function Update-BoothConfig {
     $script:StartScreenVideo = $Body.startScreenVideo
     $script:LightsScript = $Body.lightsScript
     $script:Kiosk = [bool]$Body.kiosk
+    $script:InstallPrograms = @($Body.installPrograms | Where-Object { $_ })
 
     $Drivers = @($Body.drivers | Where-Object { $_ })
     if ($Drivers.Count -gt 0) {
@@ -1505,6 +1507,72 @@ function Get-BoothSoftware {
 }
 
 # --------------------------------------------------
+# PROGRAMS TO INSTALL
+# --------------------------------------------------
+
+# Programs booth-config asks for (kiosk booths only, e.g. Notepad++): when no
+# uninstall entry matches "detect", the official installer is downloaded,
+# checked against its SHA-256 and run silently. Once per power-on.
+$InstallPrograms = @()
+$InstallStatus = $null
+
+function Install-Programs {
+    $Installed = @(Get-ItemProperty -Path @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        ) -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | ForEach-Object { "$($_.DisplayName)" })
+
+    $Results = @()
+    foreach ($Program in @($script:InstallPrograms | Where-Object { $_ -and $_.id })) {
+        $Result = [ordered]@{ name = $Program.name; installed = $false; error = $null }
+
+        try {
+            if ($Installed | Where-Object { $_ -match $Program.detect }) {
+                $Result.installed = $true
+                $Results += [PSCustomObject]$Result
+                continue
+            }
+
+            $Dir = "$AgentDir\software"
+            New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+            $Setup = Join-Path $Dir "$($Program.id).exe"
+
+            Write-Log "$($Program.name) missing: downloading"
+            Invoke-WebRequest -Uri $Program.url -OutFile $Setup -TimeoutSec 600 -UseBasicParsing -ErrorAction Stop
+
+            $Hash = (Get-FileHash -Path $Setup -Algorithm SHA256).Hash
+            if ($Hash -ne $Program.sha256) {
+                Remove-Item $Setup -Force -ErrorAction SilentlyContinue
+                throw "installer fingerprint mismatch ($Hash), refused"
+            }
+
+            # WaitForExit, not Start-Process -Wait (which also waits for any
+            # program the installer leaves running).
+            $Process = Start-Process -FilePath $Setup -ArgumentList $Program.args -PassThru -WindowStyle Hidden
+            if (-not $Process.WaitForExit(300000)) { throw "installer still running after 5 min" }
+            Remove-Item $Setup -Force -ErrorAction SilentlyContinue
+
+            $Now = @(Get-ItemProperty -Path @(
+                    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+                ) -ErrorAction SilentlyContinue | Where-Object { "$($_.DisplayName)" -match $Program.detect })
+            if (-not $Now) { throw "installer exited with code $($Process.ExitCode) but $($Program.name) is not installed" }
+
+            $Result.installed = $true
+            Write-Log "$($Program.name) installed"
+        }
+        catch {
+            $Result.error = $_.Exception.Message
+            Write-Log "$($Program.name) install error: $($_.Exception.Message)"
+        }
+
+        $Results += [PSCustomObject]$Result
+    }
+
+    $script:InstallStatus = $Results
+}
+
+# --------------------------------------------------
 # INVENTORY
 # --------------------------------------------------
 
@@ -1834,7 +1902,7 @@ catch {
 # dashboard or Drive cannot be reached. A booth without a type in the
 # dashboard keeps checking its config hourly, to pick it up once it is set.
 $BoothType = $null
-$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; inventory = $false }
+$SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; installs = $false; inventory = $false }
 $NextLightsFix = Get-Date
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
@@ -1853,7 +1921,7 @@ while ($true) {
     $LastLoopTime = Get-Date
 
     if ($Gap -gt 10) {
-        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; inventory = $false }
+        $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; installs = $false; inventory = $false }
         $NextSetupTry = Get-Date
 
         try {
@@ -1912,7 +1980,7 @@ while ($true) {
         }
     }
 
-    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk -and $SetupDone.inventory) -and (Get-Date) -ge $NextSetupTry) {
+    if (-not ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk -and $SetupDone.installs -and $SetupDone.inventory) -and (Get-Date) -ge $NextSetupTry) {
 
         $NextSetupTry = (Get-Date).AddMinutes(5)
 
@@ -1947,8 +2015,14 @@ while ($true) {
             $SetupDone.kiosk = $true
         }
 
-        # After the kiosk step, so that what it removed is no longer listed.
-        if ($SetupDone.config -and $SetupDone.kiosk -and -not $SetupDone.inventory) {
+        # Per-program problems are reported, not retried.
+        if ($SetupDone.config -and -not $SetupDone.installs) {
+            try { Install-Programs; $SetupDone.installs = $true }
+            catch { Write-Log "Programs install error: $($_.Exception.Message)" }
+        }
+
+        # After the kiosk step and installs, so that the list is up to date.
+        if ($SetupDone.config -and $SetupDone.kiosk -and $SetupDone.installs -and -not $SetupDone.inventory) {
             try { Send-Inventory; $SetupDone.inventory = $true }
             catch { Write-Log "Inventory error: $($_.Exception.Message)" }
         }
@@ -1958,7 +2032,7 @@ while ($true) {
             catch { Write-Log "Lights script error: $($_.Exception.Message)" }
         }
 
-        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk -and $SetupDone.inventory) {
+        if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk -and $SetupDone.installs -and $SetupDone.inventory) {
             Write-Log "Booth setup done (type: $BoothType)"
             $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
         }
