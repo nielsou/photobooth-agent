@@ -158,7 +158,9 @@ function Get-DnpInfo {
     $script:DnpNextQuery = (Get-Date).AddSeconds($DnpQueryInterval)
     $Result = @()
 
-    foreach ($Path in @([DnpUsb]::DevicePaths() | Where-Object { $_ -match 'vid_1452' })) {
+    # DNP (1452) and Citizen (1343): Citizen photo printers are DNP-built and
+    # speak the same protocol (Gutenprint dnpds40 backend).
+    foreach ($Path in @([DnpUsb]::DevicePaths() | Where-Object { $_ -match 'vid_(1452|1343)' })) {
 
         $Raw = [ordered]@{}
         $Errors = @()
@@ -200,6 +202,7 @@ function Get-DnpInfo {
 
         $Result += [PSCustomObject]@{
             device         = ($Path -replace '^.*?#(vid_[0-9a-f]{4}&pid_[0-9a-f]{4}).*$', '$1')
+            vendor         = $(if ($Path -match 'vid_1343') { "Citizen" } else { "DNP" })
             mediaRemaining = $Remaining
             statusCode     = $StatusCode
             media          = $Raw["MEDIA"]
@@ -440,7 +443,7 @@ function Get-AgentStatus {
     $DnpDevices = @()
 
     try {
-        $DnpQueues = @($PrinterList | Where-Object { $_.manufacturer -match 'Dai Nippon' -and $_.connected -ne $false })
+        $DnpQueues = @($PrinterList | Where-Object { $_.manufacturer -match 'Dai Nippon|CITIZEN' -and $_.connected -ne $false })
 
         # Do not talk to the printer while a job is being sent to it. A job
         # stuck for > 2 min (paper end, cover open...) means nothing is being
@@ -461,6 +464,12 @@ function Get-AgentStatus {
     }
     catch {
         Write-Log "DNP query error: $($_.Exception.Message)"
+    }
+
+    # USB printers seen by Windows (vid/pid), to identify new printer models.
+    $UsbPrintDevices = @()
+    if ($DnpReady) {
+        try { $UsbPrintDevices = @([DnpUsb]::DevicePaths() | ForEach-Object { $_ -replace '^.*?#(vid_[0-9a-f]{4}&pid_[0-9a-f]{4}).*$', '$1' }) } catch { }
     }
 
     # Printer alert popup currently requested, and whether its helper runs
@@ -493,6 +502,7 @@ function Get-AgentStatus {
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
+        usbPrintDevices   = $UsbPrintDevices
         paperOutPopup     = $AlertShown
         printerAlert      = $AlertId
         popupHelper       = $HelperState
