@@ -81,7 +81,7 @@ export async function DELETE(request) {
 // Authorization: Bearer <DASHBOARD_TOKEN>
 // Assigns a type to a booth that has none. Once set, it cannot be changed
 // from the dashboard (fix mistakes directly in Redis). Smart Flash can be
-// turned on and off any time (the booth applies it within 5 min).
+// turned on and off any time (the booth applies it within about 1 min).
 export async function PATCH(request) {
   const boothId = new URL(request.url).searchParams.get("id") || "";
 

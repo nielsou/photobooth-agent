@@ -2079,7 +2079,7 @@ catch {
 $BoothType = $null
 $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; installs = $false; inventory = $false }
 $NextLightsFix = Get-Date
-$NextConfigCheck = (Get-Date).AddMinutes(5)
+$NextConfigCheck = (Get-Date).AddMinutes(1)
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
 
@@ -2245,10 +2245,10 @@ while ($true) {
         Write-Log "Paper alert error: $($_.Exception.Message)"
     }
 
-    # Booth config again every 5 min (304 when unchanged): a Smart Flash switch
+    # Booth config again every minute (304 when unchanged): a Smart Flash switch
     # in the dashboard reaches the lights script without restarting the booth.
     if ($SetupDone.config -and (Get-Date) -ge $NextConfigCheck) {
-        $NextConfigCheck = (Get-Date).AddMinutes(5)
+        $NextConfigCheck = (Get-Date).AddMinutes(1)
         try { Update-BoothConfig }
         catch { Write-Log "Booth config check error: $($_.Exception.Message)" }
     }

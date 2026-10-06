@@ -177,8 +177,8 @@ agent writes it there with the booth's actual Arduino COM port, the Smart Flash
 setting (on/off switch per booth, in the "Smart Flash" column and the Configuration
 tab) and the booth's MIN / MAX brightness when set in the Configuration tab's "Smart
 Flash" card, which also shows the values the booth reads in its script. The agent
-checks the booth config every 5 min (304 when unchanged), so a switch applies within
-about 5 min. At every heartbeat it reads the file back and rewrites it if it differs
+checks the booth config every minute (304 when unchanged), so a switch applies within
+about 1 min. At every heartbeat it reads the file back and rewrites it if it differs
 (edited, deleted, Arduino on another port); the column shows "Script OK" or "Erreur de
 script". `DEVICE_DRIVERS` installs the CH341 USB-serial driver of the Arduino clones
 (WHQL) on every booth when missing.

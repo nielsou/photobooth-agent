@@ -300,7 +300,7 @@ function arduinoCell(boards, lights, smartFlash) {
 
 // Smart Flash on/off (booth.smartFlash, server side): off, the lights script
 // always sends FIXED_BRIGHTNESS (lights on a generator). Applied by the booth
-// within 5 min (agent >= 1.28.0).
+// within about 1 min (agent >= 1.28.0).
 function smartFlashSwitch(booth, onDone = refresh) {
   const s = booth.status || {};
   if (!s.lights && asList(s.arduino).length === 0) return null;
@@ -798,7 +798,7 @@ function codesCard(codesSeen) {
 
 // Smart Flash settings per booth (Configuration tab): on/off, MIN and MAX
 // brightness. "Dans le script" is what the booth reads in its lights script
-// (agent >= 1.29.0); a change is applied by the booth within 5 min.
+// (agent >= 1.29.0); a change is applied by the booth within about 1 min.
 const DEFAULT_LIGHTS = { min: 9, max: 80 };
 
 function smartFlashRow(booth) {
@@ -873,7 +873,7 @@ function smartFlashCard(booths) {
   return el("article", { class: "config-card" },
     el("h2", {}, "Smart Flash"),
     el("p", { class: "hint" },
-      "Lumières pilotées par la carte Arduino. ON : MIN au repos, montée de MIN à MAX pendant le compte à rebours, MAX pour la photo. OFF : toujours 100 (lumières sur générateur). Le booth applique un changement dans les 5 min."),
+      "Lumières pilotées par la carte Arduino. ON : MIN au repos, montée de MIN à MAX pendant le compte à rebours, MAX pour la photo. OFF : toujours 100 (lumières sur générateur). Le booth applique un changement en 1 min environ."),
     rows.length === 0 ? el("p", { class: "hint" }, "Aucun booth avec une carte Smart Flash.") : el("div", { class: "table-wrap" },
       el("table", {},
         el("thead", {}, el("tr", {},
