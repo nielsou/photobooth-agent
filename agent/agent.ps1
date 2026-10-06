@@ -1296,9 +1296,14 @@ function Install-LightsScript {
     param($Arduino)
 
     $Config = $script:LightsScript
-    if (-not $Config -or -not $Config.url) { return }
+    if (-not $Config) { return }
 
-    if (-not $script:LightsTemplate) {
+    if ($Config.content) {
+        # Script sent by booth-config (agent >= 1.28.0, lib/lights-script.js).
+        $script:LightsTemplate = "$($Config.content)"
+    }
+    elseif ($Config.url -and -not $script:LightsTemplate) {
+        # Older config: template downloaded from Google Drive.
         $Cache = "$AgentDir\media\DSLR_Tiggers.bat"
         New-Item -ItemType Directory -Path (Split-Path $Cache) -Force | Out-Null
 
@@ -1317,13 +1322,9 @@ function Install-LightsScript {
         $script:LightsTemplate = [IO.File]::ReadAllText($Cache, (New-Object Text.UTF8Encoding $false))
     }
 
-    $Com = Get-ArduinoCom -Arduino $Arduino
-    $Content = $script:LightsTemplate
+    if (-not $script:LightsTemplate) { return }
 
-    # Keep the template's port when no Arduino was ever seen on this PC.
-    if ($Com) {
-        $Content = [regex]::Replace($Content, '(?im)^(\s*set\s+PORTNUMBER=)COM\d+', "`${1}$Com")
-    }
+    $Content = Get-LightsContent -Arduino $Arduino
 
     $Current = $null
     if (Test-Path $Config.path) { $Current = [IO.File]::ReadAllText($Config.path, (New-Object Text.UTF8Encoding $false)) }
@@ -1331,27 +1332,57 @@ function Install-LightsScript {
     if ($Current -ne $Content) {
         New-Item -ItemType Directory -Path (Split-Path $Config.path) -Force | Out-Null
         [IO.File]::WriteAllText($Config.path, $Content, (New-Object Text.UTF8Encoding $false))
-        Write-Log "Lights script written: $($Config.path) (port $(if ($Com) { $Com } else { 'from template' }))"
+        $Com = Get-ArduinoCom -Arduino $Arduino
+        Write-Log "Lights script written: $($Config.path) (port $(if ($Com) { $Com } else { 'from template' }), Smart Flash $(Get-SmartFlashSetting))"
     }
 
     $script:LightsStatus = Get-LightsState -Arduino $Arduino
 }
 
+# TRUE / FALSE as set in the dashboard (TRUE when the config does not say).
+function Get-SmartFlashSetting {
+    if ($script:LightsScript -and $script:LightsScript.smartFlashActivated -eq $false) { return "FALSE" }
+    return "TRUE"
+}
+
+# The script this booth must have: the template with the Arduino's COM port
+# (the template's own when no Arduino was ever seen on this PC) and the
+# dashboard's SMART_FLASH_ACTIVATED.
+function Get-LightsContent {
+    param($Arduino)
+
+    $Content = $script:LightsTemplate
+    $Com = Get-ArduinoCom -Arduino $Arduino
+
+    if ($Com) {
+        $Content = [regex]::Replace($Content, '(?im)^(\s*set\s+PORTNUMBER=)COM\d+', "`${1}$Com")
+    }
+    $Content = [regex]::Replace($Content, '(?im)^(\s*set\s+SMART_FLASH_ACTIVATED=)[^\r\n]*', "`${1}$(Get-SmartFlashSetting)")
+
+    return $Content
+}
+
 # What the lights script on disk really says, read again at every heartbeat
-# (someone may have edited or deleted it): com is the port in the file,
-# expected the Arduino's, ok when they match.
+# (someone may have edited or deleted it, or the dashboard changed the Smart
+# Flash setting): com is the port in the file, expected the Arduino's,
+# smartFlash the file's SMART_FLASH_ACTIVATED, ok when the file is exactly the
+# script this booth must have.
 function Get-LightsState {
     param($Arduino)
 
     $Config = $script:LightsScript
     if (-not $Config -or -not $Config.path -or -not $script:LightsTemplate) { return $null }
 
+    $Text = $null
     $Port = $null
+    $SmartFlash = $null
     $Missing = -not (Test-Path $Config.path)
     if (-not $Missing) {
         try {
-            $Text = [IO.File]::ReadAllText($Config.path)
+            $Text = [IO.File]::ReadAllText($Config.path, (New-Object Text.UTF8Encoding $false))
             $Port = [regex]::Match($Text, '(?im)^\s*set\s+PORTNUMBER=(COM\d+)').Groups[1].Value
+            $Flag = [regex]::Match($Text, '(?im)^\s*set\s+SMART_FLASH_ACTIVATED=([^\r\n]*)')
+            if ($Flag.Success) { $SmartFlash = $Flag.Groups[1].Value.Trim() -ne "FALSE" }
         }
         catch { }
     }
@@ -1365,8 +1396,9 @@ function Get-LightsState {
         path        = $Config.path
         com         = $(if ($Port) { $Port } else { $null })
         expected    = $Expected
+        smartFlash  = $SmartFlash
         missing     = $Missing
-        ok          = (-not $Missing) -and $Port -and ($Port -eq $Expected)
+        ok          = (-not $Missing) -and ($Text -eq (Get-LightsContent -Arduino $Arduino))
         arduinoSeen = [bool](Get-ArduinoCom -Arduino $Arduino)
     }
 }
@@ -2025,6 +2057,7 @@ catch {
 $BoothType = $null
 $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; installs = $false; inventory = $false }
 $NextLightsFix = Get-Date
+$NextConfigCheck = (Get-Date).AddMinutes(5)
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
 
@@ -2188,6 +2221,14 @@ while ($true) {
     }
     catch {
         Write-Log "Paper alert error: $($_.Exception.Message)"
+    }
+
+    # Booth config again every 5 min (304 when unchanged): a Smart Flash switch
+    # in the dashboard reaches the lights script without restarting the booth.
+    if ($SetupDone.config -and (Get-Date) -ge $NextConfigCheck) {
+        $NextConfigCheck = (Get-Date).AddMinutes(5)
+        try { Update-BoothConfig }
+        catch { Write-Log "Booth config check error: $($_.Exception.Message)" }
     }
 
     if ((Get-Date) -ge $NextUpdateCheck) {

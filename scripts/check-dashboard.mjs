@@ -53,14 +53,14 @@ const booths = {
   unknownCodesSeen: [4242],
   booths: [
     {
-      boothId: "ONLINE-FULL", type: "Signature", online: true, ageSeconds: 5, receivedAt: now,
+      boothId: "ONLINE-FULL", type: "Signature", smartFlash: false, online: true, ageSeconds: 5, receivedAt: now,
       status: {
         agentVersion: "1.16.0", internet: true, spooler: "Running", printerAlert: "jam", paperOutPopup: true,
         network: { type: "wifi", name: "Salle", signal: 35, latencyMs: 220, packetLoss: 33, failedHeartbeats: 1 },
         arduino: [{ name: "USB-SERIAL CH340 (COM7)", com: "COM7", usbId: "VID_1A86&PID_7523", present: true, driverMissing: false }],
         fonts: { expected: 23, missing: ["Amarillo.ttf"], checkedAt: now },
         drivers: [{ name: "DP-DS620", installed: true }, { name: "Other", installed: false, error: "boom" }],
-        lights: { path: "C:/dslrBooth/PROJET_LUMIERES/DSLR_Tiggers.bat", com: "COM6", arduinoSeen: true },
+        lights: { path: "C:/dslrBooth/PROJET_LUMIERES/DSLR_Tiggers.bat", com: "COM6", expected: "COM7", smartFlash: true, ok: false, arduinoSeen: true },
         kiosk: { appliedAt: now, done: ["power", "users"], errors: ["shortcuts: boom"], shortcutsFixed: 1, autoLogon: "booth" },
         installs: [{ name: "Notepad++", installed: true, error: null }, { name: "X", installed: false, error: "boom" }],
         cleanup: { at: now, removed: ["Microsoft.BingNews"], errors: ["OneDrive: boom"] },

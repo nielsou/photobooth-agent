@@ -293,6 +293,60 @@ function arduinoCell(boards, lights) {
   }));
 }
 
+// Smart Flash on/off (booth.smartFlash, server side): off, the lights script
+// always sends FIXED_BRIGHTNESS (lights on a generator). Applied by the booth
+// within 5 min (agent >= 1.28.0).
+function smartFlashSwitch(booth) {
+  const s = booth.status || {};
+  if (!s.lights && asList(s.arduino).length === 0) return null;
+
+  const input = el("input", {
+    type: "checkbox",
+    onchange: () => setSmartFlash(booth.boothId, input.checked, input),
+  });
+  input.checked = booth.smartFlash !== false;
+
+  const applied = s.lights && "smartFlash" in s.lights ? s.lights.smartFlash : null;
+  const pending = applied !== null && applied !== (booth.smartFlash !== false);
+
+  return el("label", {
+    class: "switch",
+    title: booth.smartFlash !== false
+      ? "Smart Flash activé : lumières modulées pendant la session"
+      : "Smart Flash désactivé : lumières toujours à 100 % (générateur)",
+  },
+    input,
+    el("span", { class: "switch-track" }),
+    el("span", {}, booth.smartFlash !== false ? "ON" : "OFF"),
+    pending ? el("span", { class: "hint" }, "(en cours d'application)") : null,
+  );
+}
+
+async function setSmartFlash(boothId, activated, input) {
+  const question = activated
+    ? `Réactiver le Smart Flash sur ${boothId} ?
+
+Les lumières suivront de nouveau la session.`
+    : `Désactiver le Smart Flash sur ${boothId} ?
+
+Les lumières resteront à 100 % (générateur).`;
+  if (!confirm(question)) {
+    input.checked = !activated;
+    return;
+  }
+
+  try {
+    await api(`/api/booths?id=${encodeURIComponent(boothId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ smartFlash: activated }),
+    });
+  } catch (error) {
+    showError(error.message);
+  }
+  refresh();
+}
+
 // What is wrong with the lights script, or null.
 function lightsError(lights, boards) {
   if (!lights) return null;
@@ -304,6 +358,7 @@ function lightsError(lights, boards) {
     expected = plugged ? plugged.com : lights.com;
   }
   if (lights.com !== expected) return `script sur ${lights.com || "aucun port"}, carte sur ${expected}`;
+  if (lights.ok === false) return "script modifié";
   return null;
 }
 
@@ -530,7 +585,7 @@ function boothRow(booth) {
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
       state,
       el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
-    el("td", {}, arduinoCell(s.arduino, s.lights), lightsNote(s.lights, s.arduino)),
+    el("td", {}, smartFlashSwitch(booth), arduinoCell(s.arduino, s.lights), lightsNote(s.lights, s.arduino)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),

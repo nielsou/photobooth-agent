@@ -1,7 +1,7 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
 import { BOOTH_TYPES, DNP_CODES } from "../lib/printer-alerts.js";
-import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType, listDnpCodesSeen } from "../lib/store.js";
+import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType, listDnpCodesSeen, getSmartFlashOff, setSmartFlash } from "../lib/store.js";
 
 // The agent posts every 30 s; a booth is offline after 3 missed heartbeats.
 const OFFLINE_AFTER_SECONDS = 90;
@@ -13,11 +13,12 @@ export async function GET(request) {
   let records;
   let types;
   let codesSeen;
+  let smartFlashOff;
   try {
     const denied = await authorizeDashboard(request);
     if (denied) return denied;
 
-    [records, types, codesSeen] = await Promise.all([listBoothStatuses(), getBoothTypes(), listDnpCodesSeen()]);
+    [records, types, codesSeen, smartFlashOff] = await Promise.all([listBoothStatuses(), getBoothTypes(), listDnpCodesSeen(), getSmartFlashOff()]);
   } catch (error) {
     console.error(error);
     return json({ error: "Storage unavailable" }, 503);
@@ -33,6 +34,7 @@ export async function GET(request) {
       return {
         ...record,
         type: types[record.boothId] || null,
+        smartFlash: !(record.boothId in smartFlashOff),
         ageSeconds,
         online: ageSeconds !== null && ageSeconds <= OFFLINE_AFTER_SECONDS,
       };
@@ -71,10 +73,11 @@ export async function DELETE(request) {
   }
 }
 
-// PATCH /api/booths?id=<boothId>  body: { "type": "Signature" }
+// PATCH /api/booths?id=<boothId>  body: { "type": "Signature" } or { "smartFlash": false }
 // Authorization: Bearer <DASHBOARD_TOKEN>
 // Assigns a type to a booth that has none. Once set, it cannot be changed
-// from the dashboard (fix mistakes directly in Redis).
+// from the dashboard (fix mistakes directly in Redis). Smart Flash can be
+// turned on and off any time (the booth applies it within 5 min).
 export async function PATCH(request) {
   const boothId = new URL(request.url).searchParams.get("id") || "";
 
@@ -87,6 +90,12 @@ export async function PATCH(request) {
     }
 
     const body = await request.json().catch(() => null);
+
+    if (typeof body?.smartFlash === "boolean") {
+      await setSmartFlash(boothId, body.smartFlash);
+      return json({ ok: true, boothId, smartFlash: body.smartFlash });
+    }
+
     const type = body?.type;
 
     if (!BOOTH_TYPES.includes(type)) {

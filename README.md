@@ -163,18 +163,24 @@ asset id `photoboothparis` used by event_generator). It is cached under
 next power-on without downloading again. To change the video: upload it to Drive and
 update its id, SHA-256 and size.
 
-### Lights (Arduino)
+### Lights (Arduino / Smart Flash)
 
-`LIGHTS_SCRIPT` (`lib/printer-alerts.js`): the dslrBooth trigger script
-(`DSLR_Tiggers.bat`, "PROJET LUMIERES" Drive folder) that sends `set_brightness N` to
-the Arduino at each step of a session. event_generator points dslrBooth to
-`C:\dslrBooth\PROJET_LUMIERES\DSLR_Tiggers.bat`; the agent writes it there at power-on
-with the booth's actual Arduino COM port (template: COM6). At every heartbeat it reads
-the port back from the file on disk and reports it (`lights.com`, `expected`, `ok`,
-`missing`); the dashboard's "Smart Flash" column shows "Script OK", or "Erreur de script" with the board's badge turned red. If the
-file was edited, deleted, or the Arduino moved to another COM port, the agent rewrites
-it within 30 s. `DEVICE_DRIVERS` installs the CH341
-USB-serial driver of the Arduino clones (WHQL) on every booth when missing.
+The dslrBooth trigger script (`DSLR_Tiggers.bat`) is in `lib/lights-script.js` (it used
+to come from the "PROJET LUMIERES" Drive folder). dslrBooth calls it at each step of a
+session (`%1` = event, `%2` = countdown progress in percent) and it sends
+`set_brightness N` to the Arduino: MIN at rest, rising from MIN to MAX during the
+countdown, MAX for the capture. With `SMART_FLASH_ACTIVATED=FALSE` it always sends
+`FIXED_BRIGHTNESS` (100), for lights on a generator. The port is opened with
+`DTR=OFF` so the Arduino is not reset by each call.
+
+event_generator points dslrBooth to `C:dslrBoothPROJET_LUMIERESDSLR_Tiggers.bat`; the
+agent writes it there with the booth's actual Arduino COM port and the Smart Flash
+setting, an on/off switch per booth in the dashboard's "Smart Flash" column. The agent
+checks the booth config every 5 min (304 when unchanged), so a switch applies within
+about 5 min. At every heartbeat it reads the file back and rewrites it if it differs
+(edited, deleted, Arduino on another port); the column shows "Script OK" or "Erreur de
+script". `DEVICE_DRIVERS` installs the CH341 USB-serial driver of the Arduino clones
+(WHQL) on every booth when missing.
 
 ### Booth software (dslrBooth / LumaBooth)
 
