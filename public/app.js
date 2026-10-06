@@ -393,11 +393,13 @@ function kioskCheck(kiosk) {
   return check(errors.length === 0, errors.length ? "Mode kiosque : erreur" : "Mode kiosque", title);
 }
 
-// Apps and programs removed from booths at power-on (agent >= 1.25.0).
+// Apps and programs removed from booths at power-on (agent >= 1.25.0): only
+// shown when something could not be removed.
 function cleanupCheck(cleanup) {
   if (!cleanup) return null;
   const removed = asList(cleanup.removed);
   const errors = asList(cleanup.errors);
+  if (errors.length === 0) return null;
   const title = [
     `Vérifié le ${formatDate(cleanup.at)}`,
     removed.length ? `Retiré : ${removed.join(", ")}` : "Rien à retirer",
