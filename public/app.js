@@ -336,10 +336,8 @@ function lightsNote(lights, boards) {
   if (lights.com !== expected) {
     return el("div", { title }, badge(`Lumières : ${lights.com || "pas de port"} ≠ Arduino ${expected}`, "bad"));
   }
-  if (!lights.arduinoSeen) {
-    return el("div", { title }, badge(`Lumières : ${lights.com} (Arduino jamais vue)`, "warn"));
-  }
-  return el("div", { title }, badge(`Lumières : ${lights.com} ✓`, "ok"));
+  return el("div", { class: "hint", title },
+    lights.arduinoSeen ? `Script on ${lights.com}` : `Script on ${lights.com} (Arduino jamais vue)`);
 }
 
 // dslrBooth / LumaBooth (agent >= 1.20.0): version, start with Windows, and

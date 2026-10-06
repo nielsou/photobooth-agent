@@ -171,7 +171,7 @@ the Arduino at each step of a session. event_generator points dslrBooth to
 `C:\dslrBooth\PROJET_LUMIERES\DSLR_Tiggers.bat`; the agent writes it there at power-on
 with the booth's actual Arduino COM port (template: COM6). At every heartbeat it reads
 the port back from the file on disk and reports it (`lights.com`, `expected`, `ok`,
-`missing`); the dashboard shows a green "Lumières : COMx ✓" badge or a red one. If the
+`missing`); the dashboard shows "Script on COMx", or a red badge when it does not match. If the
 file was edited, deleted, or the Arduino moved to another COM port, the agent rewrites
 it within 30 s. `DEVICE_DRIVERS` installs the CH341
 USB-serial driver of the Arduino clones (WHQL) on every booth when missing.
