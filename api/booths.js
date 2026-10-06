@@ -37,7 +37,8 @@ export async function GET(request) {
         online: ageSeconds !== null && ageSeconds <= OFFLINE_AFTER_SECONDS,
       };
     })
-    .sort((a, b) => a.boothId.localeCompare(b.boothId));
+    // Booths switched on first, then by name.
+    .sort((a, b) => (b.online - a.online) || a.boothId.localeCompare(b.boothId));
 
   return json({
     serverTime: new Date(now).toISOString(),
