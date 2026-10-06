@@ -287,9 +287,7 @@ function arduinoCell(boards, lights, smartFlash) {
     const [label, kind] = !board.present ? ["Débranchée", "warn"]
       : board.driverMissing ? ["Pilote manquant", "bad"]
       : scriptError ? ["Erreur de script", "bad"]
-      // Original script (no SMART_FLASH_ACTIVATED line): no on/off to show.
-      : lights && lights.smartFlash == null ? ["Branchée", "ok"]
-      : (lights?.smartFlash ?? smartFlash) === false ? ["Fixe", "ok"]
+      : lightsFixed(lights, smartFlash) ? ["Fixe", "ok"]
       : ["Modulable", "ok"];
     return el("li", { title: `${board.name || "?"} (${board.usbId || "?"})` },
       badge(label, kind),
@@ -304,8 +302,6 @@ function arduinoCell(boards, lights, smartFlash) {
 function smartFlashSwitch(booth, onDone = refresh) {
   const s = booth.status || {};
   if (!s.lights && asList(s.arduino).length === 0) return null;
-  // Original script (no SMART_FLASH_ACTIVATED line): the switch would do nothing.
-  if (s.lights && s.lights.smartFlash == null) return null;
 
   const input = el("input", {
     type: "checkbox",
@@ -313,20 +309,36 @@ function smartFlashSwitch(booth, onDone = refresh) {
   });
   input.checked = booth.smartFlash !== false;
 
-  const applied = s.lights && "smartFlash" in s.lights ? s.lights.smartFlash : null;
-  const pending = applied !== null && applied !== (booth.smartFlash !== false);
+  const pending = lightsPending(booth);
 
   return el("label", {
     class: "switch",
     title: booth.smartFlash !== false
-      ? "Smart Flash activé : lumières modulées pendant la session"
-      : "Smart Flash désactivé : lumières toujours à 100 % (générateur)",
+      ? "Smart Flash activé : lumières modulées pendant la session (MIN / MAX)"
+      : "Smart Flash désactivé : MIN et MAX forcés à 100, lumières toujours à 100 (générateur)",
   },
     input,
     el("span", { class: "switch-track" }),
     el("span", {}, booth.smartFlash !== false ? "ON" : "OFF"),
     pending ? el("span", { class: "hint" }, "(en cours d'application)") : null,
   );
+}
+
+// Script on the booth not yet matching the dashboard (agent applies changes
+// within about a minute). Off: MIN = MAX = 100; on: the saved MIN / MAX.
+function lightsPending(booth) {
+  const lights = (booth.status || {}).lights;
+  if (!lights || !Number.isInteger(lights.min)) return false;
+  const wanted = booth.smartFlash === false ? { min: 100, max: 100 } : booth.lightsSettings;
+  if (!wanted) return booth.smartFlash !== false && lights.min === 100 && lights.max === 100;
+  return lights.min !== wanted.min || lights.max !== wanted.max;
+}
+
+// Lights fixed at 100 (Smart Flash off, or MIN = MAX = 100 in the script).
+function lightsFixed(lights, smartFlash) {
+  if (lights && lights.smartFlash != null) return lights.smartFlash === false;
+  if (lights && Number.isInteger(lights.min)) return lights.min === 100 && lights.max === 100;
+  return smartFlash === false;
 }
 
 async function setSmartFlash(boothId, activated, onDone) {
@@ -815,20 +827,23 @@ function smartFlashRow(booth) {
   const maxInput = el("input", { type: "number", class: "num-input", min: range.min, max: range.max, step: 1 });
   minInput.value = String(current.min);
   maxInput.value = String(current.max);
+  const off = booth.smartFlash === false;
+  if (off) {
+    // Off: the booth uses 100 / 100; the saved values come back when on.
+    minInput.disabled = true;
+    maxInput.disabled = true;
+    minInput.title = maxInput.title = "Smart Flash désactivé : 100 / 100 sur le booth";
+  }
 
   const save = el("button", {
     type: "button",
     class: "small",
+    disabled: off,
     onclick: () => saveLightsSettings(booth.boothId, minInput, maxInput, save),
   }, "Enregistrer");
 
-  const inScript = Number.isInteger(lights.min)
-    ? `MIN ${lights.min} · MAX ${lights.max}${lights.smartFlash == null ? "" : lights.smartFlash ? " · ON" : " · OFF"}`
-    : "pas encore remonté";
-  const pending = Number.isInteger(lights.min) && (
-    (Number.isInteger(wanted.min) && wanted.min !== lights.min) ||
-    (Number.isInteger(wanted.max) && wanted.max !== lights.max) ||
-    (lights.smartFlash != null && lights.smartFlash !== (booth.smartFlash !== false)));
+  const inScript = Number.isInteger(lights.min) ? `MIN ${lights.min} · MAX ${lights.max}` : "pas encore remonté";
+  const pending = lightsPending(booth);
 
   return el("tr", {},
     el("td", { class: "booth" }, booth.boothId, booth.online ? null : el("div", { class: "hint" }, "hors ligne")),
