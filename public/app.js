@@ -510,9 +510,16 @@ function boothRow(booth) {
   const forget = booth.online ? null :
     el("button", { type: "button", class: "small", onclick: () => forgetBooth(booth.boothId) }, "Retirer");
 
-  // Offline: everything but the state is the last known status, shown grey.
-  const state = booth.online ? badge("En ligne", "ok") : badge("Hors ligne", "bad");
-  state.classList.add("keep");
+  // State and network in one cell: online, the network used and its quality
+  // ("Câble · 27 ms"); offline, "Hors ligne". Offline, everything else is the
+  // last known status, shown grey.
+  let state;
+  if (booth.online) {
+    state = s.network || s.internet === false ? networkCell(s) : badge("En ligne", "ok");
+  } else {
+    state = badge("Hors ligne", "bad");
+    state.classList.add("keep");
+  }
 
   return el("tr", {
     class: booth.online ? "" : "offline",
@@ -523,7 +530,6 @@ function boothRow(booth) {
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
       state,
       el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
-    el("td", {}, networkCell(s)),
     el("td", {}, arduinoCell(s.arduino, s.lights), lightsNote(s.lights, s.arduino)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
