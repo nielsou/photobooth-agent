@@ -488,7 +488,7 @@ function Get-AgentStatus {
         fonts             = $FontsStatus
         drivers           = $DriversStatus
         startScreenVideo  = $StartScreenStatus
-        lights            = $LightsStatus
+        lights            = $(Get-LightsState -Arduino $Arduino)
         spooler           = $SpoolerStatus
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
@@ -1306,12 +1306,40 @@ function Install-LightsScript {
         Write-Log "Lights script written: $($Config.path) (port $(if ($Com) { $Com } else { 'from template' }))"
     }
 
-    $Port = [regex]::Match($Content, '(?im)^\s*set\s+PORTNUMBER=(COM\d+)').Groups[1].Value
+    $script:LightsStatus = Get-LightsState -Arduino $Arduino
+}
 
-    $script:LightsStatus = [PSCustomObject]@{
+# What the lights script on disk really says, read again at every heartbeat
+# (someone may have edited or deleted it): com is the port in the file,
+# expected the Arduino's, ok when they match.
+function Get-LightsState {
+    param($Arduino)
+
+    $Config = $script:LightsScript
+    if (-not $Config -or -not $Config.path -or -not $script:LightsTemplate) { return $null }
+
+    $Port = $null
+    $Missing = -not (Test-Path $Config.path)
+    if (-not $Missing) {
+        try {
+            $Text = [IO.File]::ReadAllText($Config.path)
+            $Port = [regex]::Match($Text, '(?im)^\s*set\s+PORTNUMBER=(COM\d+)').Groups[1].Value
+        }
+        catch { }
+    }
+
+    $Expected = Get-ArduinoCom -Arduino $Arduino
+    if (-not $Expected) {
+        $Expected = [regex]::Match($script:LightsTemplate, '(?im)^\s*set\s+PORTNUMBER=(COM\d+)').Groups[1].Value
+    }
+
+    return [PSCustomObject]@{
         path        = $Config.path
-        com         = $Port
-        arduinoSeen = [bool]$Com
+        com         = $(if ($Port) { $Port } else { $null })
+        expected    = $Expected
+        missing     = $Missing
+        ok          = (-not $Missing) -and $Port -and ($Port -eq $Expected)
+        arduinoSeen = [bool](Get-ArduinoCom -Arduino $Arduino)
     }
 }
 
@@ -1444,6 +1472,7 @@ catch {
 # dashboard keeps checking its config hourly, to pick it up once it is set.
 $BoothType = $null
 $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false }
+$NextLightsFix = Get-Date
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
 
@@ -1570,12 +1599,12 @@ while ($true) {
         }
     }
 
-    if ($SetupDone.lights -and $LightsStatus -and $Status) {
-        $Com = Get-ArduinoCom -Arduino $Status.arduino
-        if ($Com -and $Com -ne $LightsStatus.com) {
-            try { Install-LightsScript -Arduino $Status.arduino }
-            catch { Write-Log "Lights script error: $($_.Exception.Message)" }
-        }
+    # Lights script edited, deleted or Arduino moved to another port: rewrite it
+    # (at most once a minute if the write keeps failing).
+    if ($SetupDone.lights -and $Status -and $Status.lights -and -not $Status.lights.ok -and (Get-Date) -ge $NextLightsFix) {
+        $NextLightsFix = (Get-Date).AddMinutes(1)
+        try { Install-LightsScript -Arduino $Status.arduino }
+        catch { Write-Log "Lights script error: $($_.Exception.Message)" }
     }
 
     try {

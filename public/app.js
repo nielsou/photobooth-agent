@@ -319,14 +319,27 @@ function fontsNote(fonts) {
 }
 
 // dslrBooth lights script, written with the Arduino's COM port (agent >= 1.18.0).
+// From 1.19.0 the agent reads the port back from the file on disk at every
+// heartbeat (com) and compares it with the Arduino's (expected, ok).
 function lightsNote(lights, boards) {
   if (!lights) return null;
-  const plugged = asList(boards).find((b) => b.present && b.com && !b.driverMissing);
-  if (plugged && plugged.com !== lights.com) {
-    return el("div", { title: lights.path }, badge(`Lumières sur ${lights.com}, Arduino sur ${plugged.com}`, "bad"));
+  const title = lights.path;
+
+  if (lights.missing) return el("div", { title }, badge("Script lumières absent", "bad"));
+
+  let expected = lights.expected;
+  if (expected === undefined) {
+    const plugged = asList(boards).find((b) => b.present && b.com && !b.driverMissing);
+    expected = plugged ? plugged.com : lights.com;
   }
-  return el("div", { class: "hint", title: lights.path },
-    lights.arduinoSeen ? `Lumières : ${lights.com}` : `Lumières : ${lights.com} (Arduino jamais vue)`);
+
+  if (lights.com !== expected) {
+    return el("div", { title }, badge(`Lumières : ${lights.com || "pas de port"} ≠ Arduino ${expected}`, "bad"));
+  }
+  if (!lights.arduinoSeen) {
+    return el("div", { title }, badge(`Lumières : ${lights.com} (Arduino jamais vue)`, "warn"));
+  }
+  return el("div", { title }, badge(`Lumières : ${lights.com} ✓`, "ok"));
 }
 
 // Network used to reach the internet (agent >= 1.7.0).
