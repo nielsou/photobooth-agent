@@ -1170,10 +1170,12 @@ $UsersRoot = Split-Path $env:PUBLIC
 function Get-StartScreenTargets {
 
     # LumaBooth: <Program Files>\<Luma...>\content\VirtualAttendant\Audio - American Female
+    # Recent dslrBooth installers also use a "LumaBooth" folder (with
+    # dslrBooth.exe in it): only a folder with LumaBooth.exe is LumaBooth.
     $Luma = @(
         foreach ($Root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ -and (Test-Path $_) }) {
             Get-ChildItem -Path $Root -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match 'luma' } |
+                Where-Object { $_.Name -match 'luma' -and (Test-Path (Join-Path $_.FullName "LumaBooth.exe")) } |
                 ForEach-Object { Join-Path $_.FullName "content\VirtualAttendant\Audio - American Female" } |
                 Where-Object { Test-Path $_ }
         }
