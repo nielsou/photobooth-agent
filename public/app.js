@@ -873,7 +873,7 @@ function smartFlashCard(booths) {
   return el("article", { class: "config-card" },
     el("h2", {}, "Smart Flash"),
     el("p", { class: "hint" },
-      "Lumières pilotées par la carte Arduino. ON : MIN au repos, montée de MIN à MAX pendant le compte à rebours, MAX pour la photo. OFF : toujours 100 (lumières sur générateur). Le booth applique un changement en 1 min environ."),
+      "Lumières pilotées par la carte Arduino : MIN au repos, montée de MIN à MAX pendant le compte à rebours, MAX pour la photo. Modifie MIN ou MAX puis Enregistrer : le booth réécrit son script en 1 min environ, « Dans le script » montre ce qu'il lit vraiment."),
     rows.length === 0 ? el("p", { class: "hint" }, "Aucun booth avec une carte Smart Flash.") : el("div", { class: "table-wrap" },
       el("table", {},
         el("thead", {}, el("tr", {},
