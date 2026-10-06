@@ -2122,6 +2122,44 @@ function Update-Agent {
 }
 
 # --------------------------------------------------
+# LAST SETUP RESULTS
+# --------------------------------------------------
+
+# Results of the power-on setup (fonts, drivers, video, kiosk, programs),
+# saved after each setup pass and reloaded when the agent starts, so the
+# dashboard keeps showing them while the setup runs again (after a restart or
+# an update) instead of an almost empty "Programmes" column.
+$SetupStatusFile = "$AgentDir\setup-status.json"
+
+function Save-SetupStatus {
+    try {
+        [PSCustomObject]@{
+            fonts            = $script:FontsStatus
+            drivers          = $script:DriversStatus
+            startScreenVideo = $script:StartScreenStatus
+            kiosk            = $script:KioskStatus
+            installs         = $script:InstallStatus
+            cleanup          = $script:CleanupStatus
+        } | ConvertTo-Json -Depth 6 | Set-Content -Path $SetupStatusFile -Encoding UTF8
+    }
+    catch { Write-Log "Setup status save error: $($_.Exception.Message)" }
+}
+
+function Restore-SetupStatus {
+    if (-not (Test-Path $SetupStatusFile)) { return }
+    try {
+        $Saved = Get-Content -Path $SetupStatusFile -Raw | ConvertFrom-Json
+        if ($Saved.fonts) { $script:FontsStatus = $Saved.fonts }
+        if ($Saved.drivers) { $script:DriversStatus = @($Saved.drivers | ForEach-Object { $_ }) }
+        if ($Saved.startScreenVideo) { $script:StartScreenStatus = $Saved.startScreenVideo }
+        if ($Saved.kiosk) { $script:KioskStatus = $Saved.kiosk }
+        if ($Saved.installs) { $script:InstallStatus = @($Saved.installs | ForEach-Object { $_ }) }
+        if ($Saved.cleanup) { $script:CleanupStatus = $Saved.cleanup }
+    }
+    catch { Write-Log "Setup status restore error: $($_.Exception.Message)" }
+}
+
+# --------------------------------------------------
 # START
 # --------------------------------------------------
 
@@ -2139,6 +2177,8 @@ try {
 catch {
     Write-Log "Startup purge error: $($_.Exception.Message)"
 }
+
+Restore-SetupStatus
 
 try {
     Install-PopupHelper
@@ -2240,6 +2280,12 @@ while ($true) {
             catch { Write-Log "Booth config error: $($_.Exception.Message)" }
         }
 
+        # Right after the config: quick, and the lights matter during an event.
+        if ($SetupDone.config -and -not $SetupDone.lights) {
+            try { Install-LightsScript -Arduino $Status.arduino; $SetupDone.lights = $true }
+            catch { Write-Log "Lights script error: $($_.Exception.Message)" }
+        }
+
         # Per-driver / per-font problems are reported, not retried in a loop:
         # only an unreachable dashboard or Drive (exception) is retried.
         if ($SetupDone.config -and -not $SetupDone.drivers) {
@@ -2281,10 +2327,7 @@ while ($true) {
             catch { Write-Log "Inventory error: $($_.Exception.Message)" }
         }
 
-        if ($SetupDone.config -and -not $SetupDone.lights) {
-            try { Install-LightsScript -Arduino $Status.arduino; $SetupDone.lights = $true }
-            catch { Write-Log "Lights script error: $($_.Exception.Message)" }
-        }
+        Save-SetupStatus
 
         if ($SetupDone.config -and $SetupDone.drivers -and $SetupDone.fonts -and $SetupDone.video -and $SetupDone.lights -and $SetupDone.kiosk -and $SetupDone.installs -and $SetupDone.inventory) {
             Write-Log "Booth setup done (type: $BoothType)"
