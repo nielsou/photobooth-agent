@@ -10,7 +10,8 @@ $BoothId = $env:COMPUTERNAME
 $HeartbeatInterval = 30
 
 $Repo = "nielsou/photobooth-agent"
-$UpdateCheckInterval = 300
+# 15 s while testing; back to 300 (5 min) once the lights script works.
+$UpdateCheckInterval = 15
 
 # On power-on, print jobs older than this are leftovers from a previous event.
 $PurgeJobsOlderThanHours = 2
@@ -1965,12 +1966,26 @@ $FailedHeartbeats = 0
 
 function Update-Agent {
 
-    $Sha = Invoke-RestMethod `
-        -Uri "https://api.github.com/repos/$Repo/commits/main" `
-        -Headers @{ Accept = "application/vnd.github.sha" } `
-        -TimeoutSec 15 `
-        -UseBasicParsing `
-        -ErrorAction Stop
+    # Latest commit of main: from the dashboard (/api/version, the commit it
+    # was deployed from), not limited like the GitHub API (60 requests per
+    # hour and per IP without a token); GitHub API as a fallback.
+    $Sha = $null
+    $Config = Get-AgentConfig
+    if ($Config) {
+        try {
+            $Sha = (Invoke-RestMethod -Uri "$($Config.apiUrl.TrimEnd('/'))/api/version" -TimeoutSec 15 -UseBasicParsing -ErrorAction Stop).sha
+        }
+        catch { }
+    }
+
+    if (-not $Sha) {
+        $Sha = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/$Repo/commits/main" `
+            -Headers @{ Accept = "application/vnd.github.sha" } `
+            -TimeoutSec 15 `
+            -UseBasicParsing `
+            -ErrorAction Stop
+    }
 
     $Sha = "$Sha".Trim()
 
@@ -2265,5 +2280,16 @@ while ($true) {
         }
     }
 
-    Start-Sleep -Seconds $HeartbeatInterval
+    # Wait for the next heartbeat; an update check falling due meanwhile (the
+    # interval can be shorter than the heartbeat, e.g. while testing) runs on time.
+    $NextHeartbeat = (Get-Date).AddSeconds($HeartbeatInterval)
+    while ((Get-Date) -lt $NextHeartbeat) {
+        Start-Sleep -Seconds ([Math]::Max(1, [Math]::Min(($NextHeartbeat - (Get-Date)).TotalSeconds, ($NextUpdateCheck - (Get-Date)).TotalSeconds)))
+
+        if ((Get-Date) -ge $NextUpdateCheck -and (Get-Date) -lt $NextHeartbeat) {
+            $NextUpdateCheck = (Get-Date).AddSeconds($UpdateCheckInterval)
+            try { Update-Agent }
+            catch { Write-Log "Update check error: $($_.Exception.Message)" }
+        }
+    }
 }
