@@ -8,6 +8,7 @@ const $ = (id) => document.getElementById(id);
 let token = readToken();
 let timer = null;
 let boothTypes = [];
+let brightnessRange = { min: 0, max: 100 };
 
 function readToken() {
   try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
@@ -296,13 +297,13 @@ function arduinoCell(boards, lights) {
 // Smart Flash on/off (booth.smartFlash, server side): off, the lights script
 // always sends FIXED_BRIGHTNESS (lights on a generator). Applied by the booth
 // within 5 min (agent >= 1.28.0).
-function smartFlashSwitch(booth) {
+function smartFlashSwitch(booth, onDone = refresh) {
   const s = booth.status || {};
   if (!s.lights && asList(s.arduino).length === 0) return null;
 
   const input = el("input", {
     type: "checkbox",
-    onchange: () => setSmartFlash(booth.boothId, input.checked, input),
+    onchange: () => setSmartFlash(booth.boothId, input.checked, onDone),
   });
   input.checked = booth.smartFlash !== false;
 
@@ -322,19 +323,7 @@ function smartFlashSwitch(booth) {
   );
 }
 
-async function setSmartFlash(boothId, activated, input) {
-  const question = activated
-    ? `Réactiver le Smart Flash sur ${boothId} ?
-
-Les lumières suivront de nouveau la session.`
-    : `Désactiver le Smart Flash sur ${boothId} ?
-
-Les lumières resteront à 100 % (générateur).`;
-  if (!confirm(question)) {
-    input.checked = !activated;
-    return;
-  }
-
+async function setSmartFlash(boothId, activated, onDone) {
   try {
     await api(`/api/booths?id=${encodeURIComponent(boothId)}`, {
       method: "PATCH",
@@ -344,7 +333,7 @@ Les lumières resteront à 100 % (générateur).`;
   } catch (error) {
     showError(error.message);
   }
-  refresh();
+  onDone();
 }
 
 // What is wrong with the lights script, or null.
@@ -645,6 +634,7 @@ async function refresh() {
 
     const data = await api("/api/booths");
     boothTypes = data.boothTypes || [];
+    brightnessRange = data.brightnessRange || brightnessRange;
     dnpCodes = data.dnpCodes || dnpCodes;
     flagUnknownCodes(asList(data.unknownCodesSeen));
     const booths = data.booths || [];
@@ -798,11 +788,101 @@ function codesCard(codesSeen) {
   );
 }
 
+// Smart Flash settings per booth (Configuration tab): on/off, MIN and MAX
+// brightness. "Dans le script" is what the booth reads in its lights script
+// (agent >= 1.29.0); a change is applied by the booth within 5 min.
+const DEFAULT_LIGHTS = { min: 9, max: 80 };
+
+function smartFlashRow(booth) {
+  const s = booth.status || {};
+  const lights = s.lights || {};
+  const wanted = booth.lightsSettings || {};
+  const current = {
+    min: Number.isInteger(wanted.min) ? wanted.min : Number.isInteger(lights.min) ? lights.min : DEFAULT_LIGHTS.min,
+    max: Number.isInteger(wanted.max) ? wanted.max : Number.isInteger(lights.max) ? lights.max : DEFAULT_LIGHTS.max,
+  };
+
+  const range = brightnessRange;
+  const minInput = el("input", { type: "number", class: "num-input", min: range.min, max: range.max, step: 1 });
+  const maxInput = el("input", { type: "number", class: "num-input", min: range.min, max: range.max, step: 1 });
+  minInput.value = String(current.min);
+  maxInput.value = String(current.max);
+
+  const save = el("button", {
+    type: "button",
+    class: "small",
+    onclick: () => saveLightsSettings(booth.boothId, minInput, maxInput, save),
+  }, "Enregistrer");
+
+  const inScript = Number.isInteger(lights.min)
+    ? `MIN ${lights.min} · MAX ${lights.max} · ${lights.smartFlash === false ? "OFF" : "ON"}`
+    : "pas encore remonté";
+  const pending = Number.isInteger(lights.min) && (
+    (Number.isInteger(wanted.min) && wanted.min !== lights.min) ||
+    (Number.isInteger(wanted.max) && wanted.max !== lights.max) ||
+    (lights.smartFlash != null && lights.smartFlash !== (booth.smartFlash !== false)));
+
+  return el("tr", {},
+    el("td", { class: "booth" }, booth.boothId, booth.online ? null : el("div", { class: "hint" }, "hors ligne")),
+    el("td", {}, smartFlashSwitch(booth, loadConfig)),
+    el("td", {}, minInput),
+    el("td", {}, maxInput),
+    el("td", {}, save),
+    el("td", { class: "nowrap" }, el("span", { class: "hint" }, inScript),
+      pending ? el("div", { class: "hint" }, "en cours d'application") : null),
+  );
+}
+
+async function saveLightsSettings(boothId, minInput, maxInput, button) {
+  const min = Number(minInput.value);
+  const max = Number(maxInput.value);
+  const range = brightnessRange;
+  if (!Number.isInteger(min) || !Number.isInteger(max) || min < range.min || max > range.max || min > max) {
+    showError(`MIN et MAX : nombres entiers de ${range.min} à ${range.max}, MIN ≤ MAX.`);
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    await api(`/api/booths?id=${encodeURIComponent(boothId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lightsMin: min, lightsMax: max }),
+    });
+    showError("");
+  } catch (error) {
+    showError(error.message);
+  }
+  button.disabled = false;
+  loadConfig();
+}
+
+function smartFlashCard(booths) {
+  const rows = asList(booths)
+    .filter((booth) => booth.status && (booth.status.lights || asList(booth.status.arduino).length))
+    .map(smartFlashRow);
+
+  return el("article", { class: "config-card" },
+    el("h2", {}, "Smart Flash"),
+    el("p", { class: "hint" },
+      "Lumières pilotées par la carte Arduino. ON : MIN au repos, montée de MIN à MAX pendant le compte à rebours, MAX pour la photo. OFF : toujours 100 (lumières sur générateur). Le booth applique un changement dans les 5 min."),
+    rows.length === 0 ? el("p", { class: "hint" }, "Aucun booth avec une carte Smart Flash.") : el("div", { class: "table-wrap" },
+      el("table", {},
+        el("thead", {}, el("tr", {},
+          el("th", {}, "Booth"), el("th", {}, "Smart Flash"), el("th", {}, "MIN"), el("th", {}, "MAX"),
+          el("th", {}, ""), el("th", {}, "Dans le script"))),
+        el("tbody", {}, ...rows),
+      ),
+    ),
+  );
+}
+
 async function loadConfig() {
   try {
-    const data = await api("/api/printer-alerts");
+    const [data, boothsData] = await Promise.all([api("/api/printer-alerts"), api("/api/booths")]);
     dnpCodes = data.dnpCodes || dnpCodes;
-    $("config").replaceChildren(codesCard(data.codesSeen), ...asList(data.types).map(typeCard));
+    brightnessRange = boothsData.brightnessRange || brightnessRange;
+    $("config").replaceChildren(smartFlashCard(boothsData.booths), codesCard(data.codesSeen), ...asList(data.types).map(typeCard));
     configLoaded = true;
   } catch (error) {
     showError(error.message);

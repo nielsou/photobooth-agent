@@ -216,10 +216,12 @@ tr.offline .star { color: var(--muted); }
 tr.offline .mark { color: var(--muted); }
 
 /* Smart Flash on/off switch */
-.switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; }
+.switch { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 10px; font-weight: 600; margin-bottom: 3px; white-space: nowrap; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.switch-track { position: relative; width: 30px; height: 17px; border-radius: 999px; background: var(--border); transition: background 0.15s; flex: none; }
-.switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
+.switch-track { position: relative; width: 22px; height: 12px; border-radius: 999px; background: var(--border); transition: background 0.15s; flex: none; }
+.switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 8px; height: 8px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
 .switch input:checked + .switch-track { background: var(--ok); }
-.switch input:checked + .switch-track::after { transform: translateX(13px); }
+.switch input:checked + .switch-track::after { transform: translateX(10px); }
 .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.num-input { width: 64px; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }

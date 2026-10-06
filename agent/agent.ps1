@@ -1359,6 +1359,15 @@ function Get-LightsContent {
     }
     $Content = [regex]::Replace($Content, '(?im)^(\s*set\s+SMART_FLASH_ACTIVATED=)[^\r\n]*', "`${1}$(Get-SmartFlashSetting)")
 
+    # MIN / MAX brightness, when set in the dashboard's Configuration tab.
+    $Config = $script:LightsScript
+    if ($Config -and $null -ne $Config.minBrightness) {
+        $Content = [regex]::Replace($Content, '(?im)^(\s*set\s+MIN_BRIGHTNESS=)[^\r\n]*', "`${1}$([int]$Config.minBrightness)")
+    }
+    if ($Config -and $null -ne $Config.maxBrightness) {
+        $Content = [regex]::Replace($Content, '(?im)^(\s*set\s+MAX_BRIGHTNESS=)[^\r\n]*', "`${1}$([int]$Config.maxBrightness)")
+    }
+
     return $Content
 }
 
@@ -1376,6 +1385,8 @@ function Get-LightsState {
     $Text = $null
     $Port = $null
     $SmartFlash = $null
+    $Min = $null
+    $Max = $null
     $Missing = -not (Test-Path $Config.path)
     if (-not $Missing) {
         try {
@@ -1383,6 +1394,10 @@ function Get-LightsState {
             $Port = [regex]::Match($Text, '(?im)^\s*set\s+PORTNUMBER=(COM\d+)').Groups[1].Value
             $Flag = [regex]::Match($Text, '(?im)^\s*set\s+SMART_FLASH_ACTIVATED=([^\r\n]*)')
             if ($Flag.Success) { $SmartFlash = $Flag.Groups[1].Value.Trim() -ne "FALSE" }
+            $Value = [regex]::Match($Text, '(?im)^\s*set\s+MIN_BRIGHTNESS=(\d+)')
+            if ($Value.Success) { $Min = [int]$Value.Groups[1].Value }
+            $Value = [regex]::Match($Text, '(?im)^\s*set\s+MAX_BRIGHTNESS=(\d+)')
+            if ($Value.Success) { $Max = [int]$Value.Groups[1].Value }
         }
         catch { }
     }
@@ -1397,6 +1412,8 @@ function Get-LightsState {
         com         = $(if ($Port) { $Port } else { $null })
         expected    = $Expected
         smartFlash  = $SmartFlash
+        min         = $Min
+        max         = $Max
         missing     = $Missing
         ok          = (-not $Missing) -and ($Text -eq (Get-LightsContent -Arduino $Arduino))
         arduinoSeen = [bool](Get-ArduinoCom -Arduino $Arduino)

@@ -174,8 +174,10 @@ countdown, MAX for the capture. With `SMART_FLASH_ACTIVATED=FALSE` it always sen
 `DTR=OFF` so the Arduino is not reset by each call.
 
 event_generator points dslrBooth to `C:dslrBoothPROJET_LUMIERESDSLR_Tiggers.bat`; the
-agent writes it there with the booth's actual Arduino COM port and the Smart Flash
-setting, an on/off switch per booth in the dashboard's "Smart Flash" column. The agent
+agent writes it there with the booth's actual Arduino COM port, the Smart Flash
+setting (on/off switch per booth, in the "Smart Flash" column and the Configuration
+tab) and the booth's MIN / MAX brightness when set in the Configuration tab's "Smart
+Flash" card, which also shows the values the booth reads in its script. The agent
 checks the booth config every 5 min (304 when unchanged), so a switch applies within
 about 5 min. At every heartbeat it reads the file back and rewrites it if it differs
 (edited, deleted, Arduino on another port); the column shows "Script OK" or "Erreur de

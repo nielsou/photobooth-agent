@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
-import { getBoothTypes, getSmartFlashOff } from "../lib/store.js";
+import { getBoothTypes, getSmartFlashOff, getLightsSettings } from "../lib/store.js";
 import { DNP_CODES, PRINTER_ALERTS, PRINTER_DRIVERS, DEVICE_DRIVERS, START_SCREEN_VIDEO, lightsScriptFor, KIOSK_TYPES, INSTALL_PROGRAMS, REMOVE_APPS, REMOVE_PROGRAMS, qrPng } from "../lib/printer-alerts.js";
 
 // GET /api/booth-config?id=<boothId>
@@ -13,6 +13,7 @@ export async function GET(request) {
 
   let types;
   let smartFlashOff;
+  let lightsSettings;
   try {
     const denied = await authorizeDashboard(request);
     if (denied) return denied;
@@ -21,7 +22,7 @@ export async function GET(request) {
       return json({ error: "Missing or invalid id" }, 400);
     }
 
-    [types, smartFlashOff] = await Promise.all([getBoothTypes(), getSmartFlashOff()]);
+    [types, smartFlashOff, lightsSettings] = await Promise.all([getBoothTypes(), getSmartFlashOff(), getLightsSettings()]);
   } catch (error) {
     console.error(error);
     return json({ error: "Storage unavailable" }, 503);
@@ -35,7 +36,7 @@ export async function GET(request) {
   // Agents 1.9.x only know the paper-out popup.
   const paper = alerts.find((alert) => alert.id === "paper") || null;
 
-  const body = { boothId, type, printerAlerts: alerts, paperOutPopup: paper, dnpCodes: DNP_CODES, drivers: [...DEVICE_DRIVERS, ...(PRINTER_DRIVERS[type] || [])], startScreenVideo: START_SCREEN_VIDEO, lightsScript: lightsScriptFor(!(boothId in smartFlashOff)), kiosk: KIOSK_TYPES.includes(type), installPrograms: KIOSK_TYPES.includes(type) ? INSTALL_PROGRAMS : [], removeApps: KIOSK_TYPES.includes(type) ? REMOVE_APPS : [], removePrograms: KIOSK_TYPES.includes(type) ? REMOVE_PROGRAMS : [] };
+  const body = { boothId, type, printerAlerts: alerts, paperOutPopup: paper, dnpCodes: DNP_CODES, drivers: [...DEVICE_DRIVERS, ...(PRINTER_DRIVERS[type] || [])], startScreenVideo: START_SCREEN_VIDEO, lightsScript: lightsScriptFor(!(boothId in smartFlashOff), lightsSettings[boothId]), kiosk: KIOSK_TYPES.includes(type), installPrograms: KIOSK_TYPES.includes(type) ? INSTALL_PROGRAMS : [], removeApps: KIOSK_TYPES.includes(type) ? REMOVE_APPS : [], removePrograms: KIOSK_TYPES.includes(type) ? REMOVE_PROGRAMS : [] };
 
   const text = JSON.stringify(body);
   const etag = `"${createHash("sha256").update(text).digest("base64url").slice(0, 22)}"`;
