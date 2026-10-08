@@ -100,6 +100,8 @@ $State = @{
     ShownKey = $null
     Minimized = $false
     ScriptTime = (Get-Item $PSCommandPath).LastWriteTimeUtc
+    # Booth software launches (process ids) already maximized once.
+    MaximizedPids = @{}
 }
 
 function Show-Badge {
@@ -164,9 +166,9 @@ function Minimize-Alert {
 
 # dslrBooth / LumaBooth window state for the dashboard: the agent runs in
 # session 0 and cannot see this session's windows, so tell it (every 3 s).
-# During its first minute, a booth software window left "windowed" is
-# maximized (it ignores the shortcut's "Maximized"); after that it is left
-# alone, so it can still be resized by hand.
+# Once per launch of the booth software, if its window opens "windowed" during
+# its first minute, it is maximized (it ignores the shortcut's "Maximized").
+# Never again for that launch: the operator must be able to resize it.
 $BoothWindowFile = "$env:PUBLIC\PhotoboothAgent\booth-window.json"
 
 Add-Type -TypeDefinition @"
@@ -204,7 +206,8 @@ function Save-BoothWindow {
             $WindowState = [BoothWindow]::State($_.MainWindowHandle)
 
             $Age = try { ((Get-Date) - $_.StartTime).TotalSeconds } catch { 999 }
-            if ($WindowState -eq "normal" -and $Age -lt 60) {
+            if ($WindowState -eq "normal" -and $Age -lt 60 -and -not $State.MaximizedPids.ContainsKey($_.Id)) {
+                $State.MaximizedPids[$_.Id] = $true
                 [BoothWindow]::Maximize($_.MainWindowHandle)
                 $WindowState = [BoothWindow]::State($_.MainWindowHandle)
             }

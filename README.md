@@ -236,6 +236,6 @@ from the user's session, through a one-shot scheduled task). Result in `cleanup`
 shown in the "Programmes" column. TeamViewer (older booths) is removed too. Kept on purpose: Edge, Store, codecs, Photos, Camera,
 Notepad, Terminal, Snipping Tool, Quick Assist, Chrome Remote Desktop.
 
-During the first minute after dslrBooth / LumaBooth starts, the popup helper maximizes
-its window if it is left "windowed" (dslrBooth ignores the shortcut's "Maximized");
-after that it leaves the window alone.
+Once per launch of dslrBooth / LumaBooth, if its window opens "windowed" during its
+first minute, the popup helper maximizes it (dslrBooth ignores the shortcut's
+"Maximized"); never again for that launch, so the operator can resize it.
