@@ -1024,12 +1024,43 @@ function renameCard(booths) {
   );
 }
 
+// Camera per booth (Configuration tab, agent >= 1.36.0): the camera dslrBooth
+// uses, whether Windows sees it, and the red popup shown on the booth when it
+// has been missing for about a minute (per booth type).
+function cameraCard(booths, types) {
+  const popups = Object.fromEntries(asList(types).map((type) => [type.type, asList(type.alerts).find((alert) => alert.id === "camera") || null]));
+
+  const rows = asList(booths).filter((booth) => booth.status).map((booth) => {
+    const camera = booth.status.camera;
+    const popup = popups[booth.type] || null;
+    return el("tr", {},
+      el("td", { class: "booth" }, booth.boothId, booth.online ? null : el("div", { class: "hint" }, "hors ligne")),
+      el("td", {}, cameraCell(camera)),
+      el("td", {}, popup
+        ? el("div", {}, badge(popup.title, "bad"), el("div", { class: "hint" }, popup.message), popup.clip ? el("div", { class: "hint" }, `Vidéo : ${popup.clip.caption}`) : null)
+        : el("span", { class: "hint" }, booth.type ? "Aucun popup (pas un booth)" : "Aucun popup (type non défini)")),
+    );
+  });
+
+  return el("article", { class: "config-card" },
+    el("h2", {}, "Appareil photo"),
+    el("p", { class: "hint" },
+      "L'appareil que dslrBooth utilise (le dernier qu'il a connecté) et s'il est vu par Windows. S'il reste introuvable environ 1 min alors que dslrBooth tourne, le booth affiche un popup rouge « Photobooth à l'arrêt » : sur les Cinebooth, ouvrir le booth et allumer l'appareil ; sur les Signature, appeler le technicien."),
+    rows.length === 0 ? el("p", { class: "hint" }, "Aucun booth.") : el("div", { class: "table-wrap" },
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "Booth"), el("th", {}, "Appareil"), el("th", {}, "Popup si non détecté"))),
+        el("tbody", {}, ...rows),
+      ),
+    ),
+  );
+}
+
 async function loadConfig() {
   try {
     const [data, boothsData] = await Promise.all([api("/api/printer-alerts"), api("/api/booths")]);
     dnpCodes = data.dnpCodes || dnpCodes;
     brightnessRange = boothsData.brightnessRange || brightnessRange;
-    $("config").replaceChildren(smartFlashCard(boothsData.booths), renameCard(boothsData.booths), codesCard(data.codesSeen, data.types), ...asList(data.types).map(typeCard));
+    $("config").replaceChildren(smartFlashCard(boothsData.booths), cameraCard(boothsData.booths, data.types), renameCard(boothsData.booths), codesCard(data.codesSeen, data.types), ...asList(data.types).map(typeCard));
     configLoaded = true;
   } catch (error) {
     showError(error.message);
