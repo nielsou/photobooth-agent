@@ -263,3 +263,11 @@ video loop served by the dashboard (`public/popup-clips/`), downloaded once by t
 agent (SHA-256 checked) and played in the popup instead of the slides, which remain
 the fallback. DS620 paper popups: `ds620-load.mp4`, the procedure video from 2:00 to
 2:15 sped up x1.5 (ffmpeg, 480 px, no audio, ~170 KB); Citizen paper popups: `citizen-load.mp4`, the supplier's CZ-01 tutorial from 0:44 to 0:57.
+
+### Camera
+
+The booth camera must be on (booth opened) before dslrBooth starts. The agent takes
+the camera dslrBooth last connected ("Camera Connected: <name>" in its log, remembered
+in `camera.json`) and checks every 30 s whether Windows sees it (`Get-PnpDevice
+-PresentOnly`, classes Camera / Image / WPD). The dashboard's État column shows
+"Caméra absente" in red when it is not there.

@@ -505,6 +505,7 @@ function Get-AgentStatus {
         cleanup           = $CleanupStatus
         previousBoothId   = $PreviousBoothId
         computerNameNext  = $(try { $Next = Get-PendingComputerName; if ($Next -and $Next -ne $env:COMPUTERNAME) { $Next } else { $null } } catch { $null })
+        camera            = $(try { Get-CameraStatus } catch { $null })
         hardware          = $(try { Get-HardwareInfo } catch { $null })
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
@@ -1522,6 +1523,61 @@ function Get-LightsDiagnostics {
     }
     $script:LightsDiagTime = Get-Date
     return $script:LightsDiag
+}
+
+# --------------------------------------------------
+# CAMERA
+# --------------------------------------------------
+
+# The booth camera must be switched on (and the booth opened) before dslrBooth
+# starts, or it says no camera is detected. The camera the booth uses is the
+# last one dslrBooth connected ("Camera Connected: <name>" in its log,
+# remembered in camera.json); it is present when Windows sees a device with
+# that name right now (a powered-off camera stays listed as not present).
+# Checked at most every 30 s.
+$CameraFile = "$AgentDir\camera.json"
+$CameraStatus = $null
+$CameraTime = [datetime]::MinValue
+
+function Get-CameraStatus {
+    if ($script:CameraStatus -and ((Get-Date) - $script:CameraTime).TotalSeconds -lt 30) { return $script:CameraStatus }
+
+    # Camera dslrBooth last connected, from the end of its log.
+    $Expected = $null
+    foreach ($Log in Get-ChildItem -Path "$UsersRoot\*\AppData\Roaming\dslrBooth\Logs\dslrbooth.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending) {
+        try {
+            $Stream = [IO.File]::Open($Log.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            try {
+                $Stream.Seek([Math]::Max(0, $Stream.Length - 1048576), [IO.SeekOrigin]::Begin) | Out-Null
+                $Tail = (New-Object IO.StreamReader($Stream)).ReadToEnd()
+            }
+            finally { $Stream.Dispose() }
+
+            $Found = [regex]::Matches($Tail, 'Camera Connected: ([^\r\n]+)')
+            if ($Found.Count -gt 0) { $Expected = $Found[$Found.Count - 1].Groups[1].Value.Trim(); break }
+        }
+        catch { }
+    }
+
+    if ($Expected) {
+        try { [PSCustomObject]@{ name = $Expected } | ConvertTo-Json | Set-Content -Path $CameraFile -Encoding UTF8 } catch { }
+    }
+    elseif (Test-Path $CameraFile) {
+        try { $Expected = (Get-Content -Path $CameraFile -Raw | ConvertFrom-Json).name } catch { }
+    }
+
+    # Cameras Windows sees right now (webcams, DSLRs over USB).
+    $Present = @(Get-PnpDevice -PresentOnly -Class Camera, Image, WPD -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -eq 'OK' } | ForEach-Object { "$($_.FriendlyName)".Trim() } | Sort-Object -Unique)
+
+    $script:CameraStatus = [PSCustomObject]@{
+        expected = $Expected
+        present  = $Present
+        # null: dslrBooth never connected a camera on this PC (nothing to compare)
+        ok       = $(if ($Expected) { [bool]($Present -contains $Expected) } else { $null })
+    }
+    $script:CameraTime = Get-Date
+    return $script:CameraStatus
 }
 
 # --------------------------------------------------

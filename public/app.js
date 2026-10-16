@@ -583,6 +583,17 @@ function boothPrinterNotes(spooler, popupShown) {
   return notes.length ? el("div", { class: "printer-notes" }, ...notes) : null;
 }
 
+// Booth camera (agent >= 1.36.0): the one dslrBooth last connected, present
+// or not in Windows right now (switched off / booth not opened).
+function cameraNote(camera) {
+  if (!camera || camera.ok == null) return null;
+  const title = `Caméra du booth : ${camera.expected}
+Vue par Windows : ${asList(camera.present).join(", ") || "aucune"}`;
+  return camera.ok
+    ? el("div", { class: "hint", title }, "Caméra OK")
+    : el("div", { title: `${title}\nOuvrir le booth et allumer la caméra, puis relancer dslrBooth.` }, badge("Caméra absente", "bad"));
+}
+
 function boothRow(booth) {
   const s = booth.status || {};
 
@@ -609,7 +620,8 @@ function boothRow(booth) {
     el("td", {}, typeCell(booth)),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
       state,
-      el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
+      el("div", { class: "hint" }, formatAge(booth.ageSeconds)),
+      booth.online ? cameraNote(s.camera) : null),
     el("td", {}, arduinoCell(s.arduino, s.lights, booth.smartFlash), lightsNote(s.lights, s.arduino)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
