@@ -227,3 +227,9 @@ tr.offline .mark { color: var(--muted); }
 
 .name-input { width: 150px; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); text-transform: uppercase; }
 .num-input { width: 64px; font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+
+/* Popup slideshow images in the Configuration tab */
+.slides { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.slides figure { margin: 0; width: 160px; }
+.slides img { width: 160px; height: auto; border-radius: 6px; display: block; }
+.slides figcaption { font-size: 12px; margin-top: 4px; }

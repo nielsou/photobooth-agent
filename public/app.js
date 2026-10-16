@@ -756,6 +756,9 @@ function alertRow(alert) {
       el("div", { class: "popup-title" }, alert.title),
       el("div", {}, alert.message),
       el("div", { class: "hint" }, alert.detail),
+      asList(alert.slides).length ? el("div", { class: "slides" },
+        ...asList(alert.slides).filter((slide) => slide.dataUrl).map((slide) =>
+          el("figure", {}, el("img", { src: slide.dataUrl, alt: slide.caption, width: 160 }), el("figcaption", { class: "hint" }, slide.caption)))) : null,
     ),
     el("td", { class: "qr-cell" },
       alert.url

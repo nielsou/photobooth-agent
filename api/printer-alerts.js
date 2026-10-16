@@ -2,6 +2,7 @@ import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json } from "../lib/http.js";
 import { BOOTH_TYPES, TYPE_NOTES, PRINTER_ALERTS, DNP_CODES, qrPng } from "../lib/printer-alerts.js";
 import { listDnpCodesSeen } from "../lib/store.js";
+import { POPUP_IMAGES } from "../lib/popup-images.js";
 
 // GET /api/printer-alerts
 // Authorization: Bearer <DASHBOARD_TOKEN>
@@ -23,7 +24,11 @@ export async function GET(request) {
       alerts: await Promise.all(
         (PRINTER_ALERTS[type] || []).map(async (alert) => {
           const png = await qrPng(alert.url);
-          return { ...alert, qrDataUrl: png ? `data:image/png;base64,${png}` : null };
+          const slides = (alert.slides || []).map((slide) => ({
+            ...slide,
+            dataUrl: POPUP_IMAGES[slide.image] ? `data:image/jpeg;base64,${POPUP_IMAGES[slide.image]}` : null,
+          }));
+          return { ...alert, slides, qrDataUrl: png ? `data:image/png;base64,${png}` : null };
         }),
       ),
     })),

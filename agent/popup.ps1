@@ -44,10 +44,20 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
         <Button x:Name="OkButton" Content="OK" FontSize="24" Padding="56,12" HorizontalAlignment="Left"
                 Background="#2F5BEA" Foreground="White" BorderThickness="0" Cursor="Hand"/>
       </StackPanel>
-      <StackPanel x:Name="QrPanel" Grid.Column="1" VerticalAlignment="Center">
+      <StackPanel Grid.Column="1" VerticalAlignment="Center">
+      <!-- Slideshow of the alert ("slides": images + captions), e.g. how to load
+           the paper: one image every 2.5 s. -->
+      <StackPanel x:Name="SlidesPanel" Visibility="Collapsed" Margin="0,0,0,18" Width="320">
+        <Border CornerRadius="10" ClipToBounds="True" Background="#F1EFE8">
+          <Image x:Name="SlideImage" Width="320" Stretch="Uniform"/>
+        </Border>
+        <TextBlock x:Name="SlideCaption" FontSize="17" Foreground="#1B1F24" TextWrapping="Wrap" Margin="0,8,0,0"/>
+      </StackPanel>
+      <StackPanel x:Name="QrPanel" VerticalAlignment="Center">
         <Image x:Name="QrImage" Width="240" Height="240" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
         <TextBlock x:Name="QrCaptionText" FontSize="16" Foreground="#888780" TextAlignment="Center"
                    TextWrapping="Wrap" MaxWidth="240" Margin="0,10,0,0"/>
+      </StackPanel>
       </StackPanel>
     </Grid>
   </Border>
@@ -99,6 +109,8 @@ $Badge = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader 
 $State = @{
     ShownKey = $null
     Minimized = $false
+    Slides = @()
+    SlideIndex = -1
     ScriptTime = (Get-Item $PSCommandPath).LastWriteTimeUtc
     # Booth software launches (process ids) already maximized once.
     MaximizedPids = @{}
@@ -110,6 +122,25 @@ function Show-Badge {
     $Badge.Top = $Area.Bottom - $Badge.Height - 28
     $Badge.Show()
 }
+
+$SlideTimer = New-Object Windows.Threading.DispatcherTimer
+$SlideTimer.Interval = [TimeSpan]::FromSeconds(2.5)
+
+function Show-NextSlide {
+    if ($State.Slides.Count -eq 0) { return }
+    $State.SlideIndex = ($State.SlideIndex + 1) % $State.Slides.Count
+    $Slide = $State.Slides[$State.SlideIndex]
+
+    $Bitmap = New-Object Windows.Media.Imaging.BitmapImage
+    $Bitmap.BeginInit()
+    $Bitmap.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+    $Bitmap.UriSource = New-Object Uri "$AgentDir\popup-$($Slide.image)"
+    $Bitmap.EndInit()
+    $Window.FindName("SlideImage").Source = $Bitmap
+    $Window.FindName("SlideCaption").Text = "$($Slide.caption)"
+}
+
+$SlideTimer.Add_Tick({ try { Show-NextSlide } catch { } })
 
 function Show-Alert {
     param($Alert)
@@ -124,6 +155,19 @@ function Show-Alert {
     $Info = $Window.FindName("InfoText")
     $Info.Text = "$($Alert.info)"
     $Info.Visibility = if ($Alert.info) { "Visible" } else { "Collapsed" }
+
+    # Slideshow (e.g. how to load the paper): images saved by the agent.
+    $State.Slides = @(@($Alert.slides) | Where-Object { $_ -and $_.image -match '^[a-z0-9-]+\.jpg$' -and (Test-Path "$AgentDir\popup-$($_.image)") })
+    $State.SlideIndex = -1
+    if ($State.Slides.Count -gt 0) {
+        Show-NextSlide
+        $Window.FindName("SlidesPanel").Visibility = "Visible"
+        $SlideTimer.Start()
+    }
+    else {
+        $SlideTimer.Stop()
+        $Window.FindName("SlidesPanel").Visibility = "Collapsed"
+    }
 
     $QrPath = "$AgentDir\$($Alert.qrFile)"
     if ($Alert.qrFile -and (Test-Path $QrPath)) {

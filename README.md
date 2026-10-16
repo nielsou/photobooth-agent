@@ -249,3 +249,11 @@ restart puts the current name back); Windows uses the new name from the next res
 which the agent never forces. The agent then sends `previousBoothId` with its heartbeat
 and the server moves the booth's type, Smart Flash, MIN / MAX and inventory to the new
 name and drops the old entry (`migrateBooth`).
+
+### Popup slideshows
+
+An alert can carry `slides` ([{ image, caption }]): the popup shows them in turn, one
+every 2.5 s, above the QR code (DS620 paper popups: how to load the paper). Images are
+JPEGs in `lib/popup-images/`, embedded by `node scripts/build-popup-images.mjs` into
+`lib/popup-images.js`; booth-config sends the ones the booth needs (`popupImages`) and
+the agent saves them as `popup-<name>.jpg` next to its config.

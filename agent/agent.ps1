@@ -696,6 +696,19 @@ function Update-BoothConfig {
         $Alert | Add-Member -NotePropertyName qrFile -NotePropertyValue $QrFile -Force
     }
 
+    # Slideshow images of the popups (e.g. how to load the paper), next to the
+    # config so the popup helper can read them. Plain names only.
+    if ($Body.popupImages) {
+        foreach ($Image in $Body.popupImages.PSObject.Properties) {
+            if ($Image.Name -notmatch '^[a-z0-9-]+\.jpg$') { continue }
+            $ImagePath = "$AgentDir\popup-$($Image.Name)"
+            $Bytes = [Convert]::FromBase64String("$($Image.Value)")
+            if (-not (Test-Path $ImagePath) -or (Get-Item $ImagePath).Length -ne $Bytes.Length) {
+                [IO.File]::WriteAllBytes($ImagePath, $Bytes)
+            }
+        }
+    }
+
     if ($Alerts.Count -gt 0) {
         [PSCustomObject]@{ printerAlerts = $Alerts; dnpCodes = $Body.dnpCodes } | ConvertTo-Json -Depth 5 | Set-Content -Path $PopupConfigFile -Encoding UTF8
     }
