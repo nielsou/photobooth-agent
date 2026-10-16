@@ -269,5 +269,10 @@ the fallback. DS620 paper popups: `ds620-load.mp4`, the procedure video from 2:0
 The booth camera must be on (booth opened) before dslrBooth starts. The agent takes
 the camera dslrBooth last connected ("Camera Connected: <name>" in its log, remembered
 in `camera.json`) and checks every 30 s whether Windows sees it (`Get-PnpDevice
--PresentOnly`, classes Camera / Image / WPD). The dashboard's État column shows
-"Caméra absente" in red when it is not there.
+-PresentOnly`, classes Camera / Image / WPD). The dashboard's Caméra column shows
+"Absente" in red when it is not there. On booths, after two checks in a row (~1 min)
+and only while dslrBooth / LumaBooth runs, a red ("critical") popup takes over the
+printer ones (`CAMERA_ALERTS` per type): Cinebooths, "Appareil photo éteint" with a
+clip of how to open the booth and press ON; Signature, "Appareil photo non détecté",
+call the technician. No popup at all (printer or camera) while the booth software is
+not running.

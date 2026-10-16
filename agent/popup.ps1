@@ -26,7 +26,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
         WindowStyle="None" AllowsTransparency="True" Background="#99000000"
         Topmost="True" WindowState="Maximized" ShowInTaskbar="False" ResizeMode="NoResize"
         FontFamily="Segoe UI" ShowActivated="True">
-  <Border Background="White" CornerRadius="20" Padding="44,40" MaxWidth="1100"
+  <Border x:Name="Card" Background="White" CornerRadius="20" Padding="44,40" MaxWidth="1100" BorderBrush="#D92D20" BorderThickness="0"
           HorizontalAlignment="Center" VerticalAlignment="Center">
     <Grid>
       <Grid.ColumnDefinitions>
@@ -34,7 +34,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
       <StackPanel Grid.Column="0" Margin="0,0,44,0" VerticalAlignment="Center">
-        <Border Background="#FAEEDA" CornerRadius="8" Padding="12,5" HorizontalAlignment="Left" Margin="0,0,0,18">
+        <Border x:Name="BadgeBorder" Background="#FAEEDA" CornerRadius="8" Padding="12,5" HorizontalAlignment="Left" Margin="0,0,0,18">
           <TextBlock x:Name="BadgeText" Foreground="#854F0B" FontSize="18"/>
         </Border>
         <TextBlock x:Name="TitleText" FontSize="40" FontWeight="SemiBold" Foreground="#1B1F24" Margin="0,0,0,12"/>
@@ -79,7 +79,7 @@ $Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize" ShowActivated="False"
         Width="120" Height="120">
-  <Button x:Name="ReopenButton" Cursor="Hand" AutomationProperties.Name="Show printer problem"
+  <Button x:Name="ReopenButton" Background="#F2A30F" Cursor="Hand" AutomationProperties.Name="Show printer problem"
           RenderTransformOrigin="0.5,0.5">
     <Button.RenderTransform>
       <ScaleTransform x:Name="Pulse" ScaleX="0.86" ScaleY="0.86"/>
@@ -99,7 +99,7 @@ $Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader
         <Grid>
           <Ellipse Fill="#1B1F24"/>
           <Ellipse Fill="White" Margin="7"/>
-          <Ellipse Fill="#F2A30F" Margin="12"/>
+          <Ellipse Fill="{TemplateBinding Background}" Margin="12"/>
           <TextBlock Text="!" Foreground="#1B1F24" FontFamily="Segoe UI" FontSize="62" FontWeight="Black"
                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-8,0,0"/>
         </Grid>
@@ -167,6 +167,17 @@ function Show-Alert {
     param($Alert)
 
     $Window.FindName("BadgeText").Text = $Alert.badge
+
+    # "critical" (booth cannot take photos, e.g. camera off): red, not the
+    # orange of the printer warnings, also for the minimized badge.
+    $Critical = $Alert.severity -eq "critical"
+    $Brush = { param($Color) New-Object Windows.Media.SolidColorBrush ([Windows.Media.ColorConverter]::ConvertFromString($Color)) }
+    $Window.FindName("Card").BorderThickness = New-Object Windows.Thickness $(if ($Critical) { 8 } else { 0 })
+    $Window.FindName("BadgeBorder").Background = & $Brush $(if ($Critical) { "#FDE3E1" } else { "#FAEEDA" })
+    $Window.FindName("BadgeText").Foreground = & $Brush $(if ($Critical) { "#B42318" } else { "#854F0B" })
+    $Window.FindName("BadgeText").FontWeight = $(if ($Critical) { "Bold" } else { "Normal" })
+    $Window.FindName("TitleText").Foreground = & $Brush $(if ($Critical) { "#B42318" } else { "#1B1F24" })
+    $Badge.FindName("ReopenButton").Background = & $Brush $(if ($Critical) { "#E5484D" } else { "#F2A30F" })
     $Window.FindName("TitleText").Text = $Alert.title
     $Window.FindName("MessageText").Text = $Alert.message
     $Window.FindName("DetailText").Text = $Alert.detail

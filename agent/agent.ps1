@@ -684,6 +684,18 @@ function Update-BoothConfig {
     $Body = $Response.Content | ConvertFrom-Json
     $Alerts = @($Body.printerAlerts | Where-Object { $_ })
 
+    # Camera off popup (booths only): QR code saved like the printer ones.
+    $CameraAlert = $Body.cameraAlert
+    if ($CameraAlert) {
+        $CameraAlert | Add-Member -NotePropertyName qrFile -NotePropertyValue $null -Force
+        if ($CameraAlert.qrPng) {
+            [IO.File]::WriteAllBytes("$AgentDir\alert-qr-camera.png", [Convert]::FromBase64String($CameraAlert.qrPng))
+            $CameraAlert.qrFile = "alert-qr-camera.png"
+        }
+        $CameraAlert.PSObject.Properties.Remove("qrPng")
+    }
+    $script:CameraAlert = $CameraAlert
+
     # One QR code image per alert, next to the config (readable by the helper).
     foreach ($Alert in $Alerts) {
         $QrFile = $null
@@ -713,7 +725,7 @@ function Update-BoothConfig {
     # Video loops of the popups (e.g. loading the paper), served by the
     # dashboard: downloaded once, refused unless the SHA-256 matches. Without
     # it the popup shows the slides.
-    foreach ($Clip in @($Alerts | ForEach-Object { $_.clip } | Where-Object { $_ -and $_.name } | Sort-Object name -Unique)) {
+    foreach ($Clip in @(@($Alerts) + @($CameraAlert) | Where-Object { $_ } | ForEach-Object { $_.clip } | Where-Object { $_ -and $_.name } | Sort-Object name -Unique)) {
         if ($Clip.name -notmatch '^[a-z0-9-]+\.mp4$' -or $Clip.path -notmatch '^/popup-clips/[a-z0-9-]+\.mp4$') { continue }
         $ClipPath = "$AgentDir\popup-$($Clip.name)"
         if ((Test-Path $ClipPath) -and (Get-FileHash -Path $ClipPath -Algorithm SHA256).Hash -eq $Clip.sha256) { continue }
@@ -890,6 +902,26 @@ function Update-PrinterAlert {
     param($Status)
 
     $Match = Find-PrinterAlert -DnpDevices $Status.dnpDevices
+
+    # Camera off (booths only, from booth-config): after two checks in a row
+    # (~1 min, the camera may still be starting), it takes over the printer
+    # alerts: no photo at all is worse than no print.
+    $Camera = $Status.camera
+    if ($script:CameraAlert -and $Camera -and $Camera.ok -eq $false) { $script:CameraMissingChecks++ } else { $script:CameraMissingChecks = 0 }
+    if ($script:CameraMissingChecks -ge 2) {
+        $Match = [PSCustomObject]@{
+            Alert  = $script:CameraAlert
+            Device = $null
+            Info   = "Pour l'assistance : Booth $BoothId - appareil $($Camera.expected) non detecte - $(Get-Date -Format 'dd/MM HH:mm')"
+        }
+    }
+
+    # No popup at all while the booth software is not running (booth being set
+    # up or put away): nobody is taking photos.
+    if (-not (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(dslrBooth|LumaBooth)' })) {
+        $Match = $null
+    }
+
     $Current = $null
 
     if (Test-Path $AlertFile) {
@@ -903,7 +935,7 @@ function Update-PrinterAlert {
         if (-not $Current -or $Current.id -ne $Alert.id -or "$($Current.errorCode)" -ne "$Code") {
             $Data = [ordered]@{ since = (Get-Date).ToUniversalTime().ToString("o"); errorCode = $Code }
             $Alert.PSObject.Properties | ForEach-Object { $Data[$_.Name] = $_.Value }
-            $Data["info"] = Get-AlertInfo -Status $Status -Device $Match.Device
+            $Data["info"] = if ($Match.Info) { $Match.Info } else { Get-AlertInfo -Status $Status -Device $Match.Device }
             [PSCustomObject]$Data | ConvertTo-Json -Depth 5 | Set-Content -Path $AlertFile -Encoding UTF8
             Write-Log "Printer alert popup: $($Alert.id) (code $Code)"
 
@@ -1537,6 +1569,8 @@ function Get-LightsDiagnostics {
 # Checked at most every 30 s.
 $CameraFile = "$AgentDir\camera.json"
 $CameraStatus = $null
+$CameraAlert = $null
+$CameraMissingChecks = 0
 $CameraTime = [datetime]::MinValue
 
 function Get-CameraStatus {

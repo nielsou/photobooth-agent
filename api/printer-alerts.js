@@ -1,6 +1,6 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json } from "../lib/http.js";
-import { BOOTH_TYPES, TYPE_NOTES, PRINTER_ALERTS, DNP_CODES, qrPng } from "../lib/printer-alerts.js";
+import { BOOTH_TYPES, TYPE_NOTES, PRINTER_ALERTS, CAMERA_ALERTS, DNP_CODES, qrPng } from "../lib/printer-alerts.js";
 import { listDnpCodesSeen } from "../lib/store.js";
 import { POPUP_IMAGES } from "../lib/popup-images.js";
 
@@ -22,7 +22,7 @@ export async function GET(request) {
       type,
       note: TYPE_NOTES[type] || null,
       alerts: await Promise.all(
-        (PRINTER_ALERTS[type] || []).map(async (alert) => {
+        [...(CAMERA_ALERTS[type] ? [CAMERA_ALERTS[type]] : []), ...(PRINTER_ALERTS[type] || [])].map(async (alert) => {
           const png = await qrPng(alert.url);
           const slides = (alert.slides || []).map((slide) => ({
             ...slide,

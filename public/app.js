@@ -564,7 +564,7 @@ function networkCell(s) {
 }
 
 // Printer alert popups shown on the booth screen (agent >= 1.10.0).
-const POPUP_LABELS = { paper: "Plus de papier", paperWrong: "Papier mal installé", jam: "Bourrage", open: "Imprimante ouverte", error: "Problème d'imprimante" };
+const POPUP_LABELS = { camera: "Appareil photo non détecté", paper: "Plus de papier", paperWrong: "Papier mal installé", jam: "Bourrage", open: "Imprimante ouverte", error: "Problème d'imprimante" };
 
 // Booth-wide printing notes shown above the printers list: Windows print
 // service stopped (nothing prints at all), popup currently on the booth screen.
@@ -759,6 +759,7 @@ for (const button of document.querySelectorAll("#tabs button")) {
 }
 
 function triggerLabels(alert) {
+  if (alert.id === "camera") return ["Appareil photo du booth non détecté pendant ~1 min (dslrBooth lancé)"];
   const labels = asList(alert.codes).map((code) => {
     return `${dnpLabel(code)} (${code})`;
   });
@@ -814,7 +815,17 @@ function flagUnknownCodes(codes) {
 }
 
 // Every DNP code ever reported by a booth; unknown ones need identifying.
-function codesCard(codesSeen) {
+// Popup a printer status code shows on the booth screen (same for every
+// printer booth type): the first alert listing the code, else the "any other
+// error" one for codes >= 1000; normal states show nothing.
+function popupForCode(code, types) {
+  const alerts = asList((asList(types).find((type) => asList(type.alerts).some((a) => a.codes)) || {}).alerts)
+    .filter((alert) => alert.id !== "camera");
+  return alerts.find((alert) => asList(alert.codes).includes(code)) ||
+    (code >= 1000 ? alerts.find((alert) => alert.otherErrors) : null) || null;
+}
+
+function codesCard(codesSeen, types) {
   const weekAgo = Date.now() - 7 * 86400000;
   const rows = asList(codesSeen).map((entry) => {
     const known = entry.code in dnpCodes;
@@ -826,6 +837,12 @@ function codesCard(codesSeen) {
         isNew ? el("span", { class: "hint" }, " · nouveau") : null,
       ),
       el("td", { class: "nowrap" }, asList(entry.models).join(", ") || el("span", { class: "hint" }, "?")),
+      (() => {
+        const popup = popupForCode(entry.code, types);
+        return el("td", {}, popup
+          ? el("div", { title: [popup.message, popup.detail].filter(Boolean).join("\n") }, el("strong", {}, popup.title), el("div", { class: "hint" }, popup.message))
+          : el("span", { class: "hint" }, "Aucun (état normal)"));
+      })(),
       el("td", { class: "nowrap" }, formatDate(entry.firstSeen), el("div", { class: "hint" }, entry.firstBooth)),
       el("td", { class: "nowrap" }, formatDate(entry.lastSeen), el("div", { class: "hint" }, entry.lastBooth)),
       el("td", { class: "nowrap" }, String(entry.count)),
@@ -838,7 +855,7 @@ function codesCard(codesSeen) {
     rows.length === 0 ? el("p", { class: "hint" }, "Aucun code reçu pour l'instant.") : el("div", { class: "table-wrap" },
       el("table", {},
         el("thead", {}, el("tr", {},
-          el("th", {}, "Code"), el("th", {}, "Signification"), el("th", {}, "Imprimantes"), el("th", {}, "Premier relevé"),
+          el("th", {}, "Code"), el("th", {}, "Signification"), el("th", {}, "Imprimantes"), el("th", {}, "Popup affiché"), el("th", {}, "Premier relevé"),
           el("th", {}, "Dernier relevé"), el("th", {}, "Relevés"))),
         el("tbody", {}, ...rows),
       ),
@@ -1012,7 +1029,7 @@ async function loadConfig() {
     const [data, boothsData] = await Promise.all([api("/api/printer-alerts"), api("/api/booths")]);
     dnpCodes = data.dnpCodes || dnpCodes;
     brightnessRange = boothsData.brightnessRange || brightnessRange;
-    $("config").replaceChildren(smartFlashCard(boothsData.booths), renameCard(boothsData.booths), codesCard(data.codesSeen), ...asList(data.types).map(typeCard));
+    $("config").replaceChildren(smartFlashCard(boothsData.booths), renameCard(boothsData.booths), codesCard(data.codesSeen, data.types), ...asList(data.types).map(typeCard));
     configLoaded = true;
   } catch (error) {
     showError(error.message);
