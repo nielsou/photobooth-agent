@@ -709,6 +709,27 @@ function Update-BoothConfig {
         }
     }
 
+    # Video loops of the popups (e.g. loading the paper), served by the
+    # dashboard: downloaded once, refused unless the SHA-256 matches. Without
+    # it the popup shows the slides.
+    foreach ($Clip in @($Alerts | ForEach-Object { $_.clip } | Where-Object { $_ -and $_.name } | Sort-Object name -Unique)) {
+        if ($Clip.name -notmatch '^[a-z0-9-]+\.mp4$' -or $Clip.path -notmatch '^/popup-clips/[a-z0-9-]+\.mp4$') { continue }
+        $ClipPath = "$AgentDir\popup-$($Clip.name)"
+        if ((Test-Path $ClipPath) -and (Get-FileHash -Path $ClipPath -Algorithm SHA256).Hash -eq $Clip.sha256) { continue }
+
+        try {
+            Invoke-WebRequest -Uri "$($Config.apiUrl.TrimEnd('/'))$($Clip.path)" -OutFile "$ClipPath.new" -TimeoutSec 120 -UseBasicParsing -ErrorAction Stop
+            $Hash = (Get-FileHash -Path "$ClipPath.new" -Algorithm SHA256).Hash
+            if ($Hash -ne $Clip.sha256) { throw "fingerprint mismatch ($Hash), refused" }
+            Move-Item -Path "$ClipPath.new" -Destination $ClipPath -Force
+            Write-Log "Popup clip downloaded: $($Clip.name)"
+        }
+        catch {
+            Remove-Item "$ClipPath.new" -Force -ErrorAction SilentlyContinue
+            Write-Log "Popup clip error ($($Clip.name)): $($_.Exception.Message)"
+        }
+    }
+
     if ($Alerts.Count -gt 0) {
         [PSCustomObject]@{ printerAlerts = $Alerts; dnpCodes = $Body.dnpCodes } | ConvertTo-Json -Depth 5 | Set-Content -Path $PopupConfigFile -Encoding UTF8
     }

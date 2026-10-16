@@ -257,3 +257,9 @@ every 2.5 s, above the QR code (DS620 paper popups: how to load the paper). Imag
 JPEGs in `lib/popup-images/`, embedded by `node scripts/build-popup-images.mjs` into
 `lib/popup-images.js`; booth-config sends the ones the booth needs (`popupImages`) and
 the agent saves them as `popup-<name>.jpg` next to its config.
+
+An alert can also carry a `clip` ({ name, path, sha256, caption }): a short silent
+video loop served by the dashboard (`public/popup-clips/`), downloaded once by the
+agent (SHA-256 checked) and played in the popup instead of the slides, which remain
+the fallback. DS620 paper popups: `ds620-load.mp4`, the procedure video from 2:00 to
+2:15 sped up x1.5 (ffmpeg, 480 px, no audio, ~170 KB).

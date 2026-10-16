@@ -47,6 +47,11 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
       <StackPanel Grid.Column="1" VerticalAlignment="Center">
       <!-- Slideshow of the alert ("slides": images + captions), e.g. how to load
            the paper: one image every 2.5 s. -->
+      <!-- Video loop of the alert ("clip"), e.g. loading the paper: silent. -->
+      <StackPanel x:Name="ClipPanel" Visibility="Collapsed" Margin="0,0,0,18" Width="320">
+        <MediaElement x:Name="ClipPlayer" Width="320" LoadedBehavior="Manual" UnloadedBehavior="Stop" IsMuted="True" Stretch="Uniform"/>
+        <TextBlock x:Name="ClipCaption" FontSize="17" Foreground="#1B1F24" TextWrapping="Wrap" Margin="0,8,0,0"/>
+      </StackPanel>
       <StackPanel x:Name="SlidesPanel" Visibility="Collapsed" Margin="0,0,0,18" Width="320">
         <Border CornerRadius="10" ClipToBounds="True" Background="#F1EFE8">
           <Image x:Name="SlideImage" Width="320" Stretch="Uniform"/>
@@ -111,6 +116,7 @@ $State = @{
     Minimized = $false
     Slides = @()
     SlideIndex = -1
+    ClipOk = $false
     ScriptTime = (Get-Item $PSCommandPath).LastWriteTimeUtc
     # Booth software launches (process ids) already maximized once.
     MaximizedPids = @{}
@@ -142,6 +148,21 @@ function Show-NextSlide {
 
 $SlideTimer.Add_Tick({ try { Show-NextSlide } catch { } })
 
+# Loop the clip; if it cannot be played (no video codec...), show the slides.
+$Window.FindName("ClipPlayer").Add_MediaEnded({
+    $Window.FindName("ClipPlayer").Position = [TimeSpan]::Zero
+    $Window.FindName("ClipPlayer").Play()
+})
+$Window.FindName("ClipPlayer").Add_MediaFailed({
+    $State.ClipOk = $false
+    $Window.FindName("ClipPanel").Visibility = "Collapsed"
+    if ($State.Slides.Count -gt 0) {
+        Show-NextSlide
+        $Window.FindName("SlidesPanel").Visibility = "Visible"
+        $SlideTimer.Start()
+    }
+})
+
 function Show-Alert {
     param($Alert)
 
@@ -156,10 +177,26 @@ function Show-Alert {
     $Info.Text = "$($Alert.info)"
     $Info.Visibility = if ($Alert.info) { "Visible" } else { "Collapsed" }
 
+    # Video loop (e.g. loading the paper), else the slideshow below.
+    $Player = $Window.FindName("ClipPlayer")
+    $ClipFile = if ($Alert.clip -and "$($Alert.clip.name)" -match '^[a-z0-9-]+\.mp4$') { "$AgentDir\popup-$($Alert.clip.name)" } else { $null }
+    $State.ClipOk = [bool]($ClipFile -and (Test-Path $ClipFile))
+    if ($State.ClipOk) {
+        $Player.Source = New-Object Uri $ClipFile
+        $Window.FindName("ClipCaption").Text = "$($Alert.clip.caption)"
+        $Window.FindName("ClipPanel").Visibility = "Visible"
+        $Player.Position = [TimeSpan]::Zero
+        $Player.Play()
+    }
+    else {
+        $Player.Stop()
+        $Window.FindName("ClipPanel").Visibility = "Collapsed"
+    }
+
     # Slideshow (e.g. how to load the paper): images saved by the agent.
     $State.Slides = @(@($Alert.slides) | Where-Object { $_ -and $_.image -match '^[a-z0-9-]+\.jpg$' -and (Test-Path "$AgentDir\popup-$($_.image)") })
     $State.SlideIndex = -1
-    if ($State.Slides.Count -gt 0) {
+    if (-not $State.ClipOk -and $State.Slides.Count -gt 0) {
         Show-NextSlide
         $Window.FindName("SlidesPanel").Visibility = "Visible"
         $SlideTimer.Start()
@@ -199,12 +236,15 @@ function Hide-All {
     $State.Minimized = $false
     if ($Window.IsVisible) { $Window.Hide() }
     if ($Badge.IsVisible) { $Badge.Hide() }
+    $Window.FindName("ClipPlayer").Stop()
+    $SlideTimer.Stop()
 }
 
 # OK: minimize to the "!" badge until the problem is solved.
 function Minimize-Alert {
     $State.Minimized = $true
     $Window.Hide()
+    $Window.FindName("ClipPlayer").Pause()
     Show-Badge
 }
 
@@ -283,6 +323,7 @@ $Badge.FindName("ReopenButton").Add_Click({
     $State.Minimized = $false
     $Badge.Hide()
     $Window.Show()
+    if ($State.ClipOk) { $Window.FindName("ClipPlayer").Play() }
     $Window.Activate() | Out-Null
 })
 
