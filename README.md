@@ -262,4 +262,4 @@ An alert can also carry a `clip` ({ name, path, sha256, caption }): a short sile
 video loop served by the dashboard (`public/popup-clips/`), downloaded once by the
 agent (SHA-256 checked) and played in the popup instead of the slides, which remain
 the fallback. DS620 paper popups: `ds620-load.mp4`, the procedure video from 2:00 to
-2:15 sped up x1.5 (ffmpeg, 480 px, no audio, ~170 KB).
+2:15 sped up x1.5 (ffmpeg, 480 px, no audio, ~170 KB); Citizen paper popups: `citizen-load.mp4`, the supplier's CZ-01 tutorial from 0:44 to 0:57.
