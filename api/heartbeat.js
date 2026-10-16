@@ -79,11 +79,14 @@ export async function POST(request) {
   }
 
   // Keep track of every DNP status code ever reported (best effort).
-  const codes = [...new Set(
-    (Array.isArray(status.dnpDevices) ? status.dnpDevices : [])
-      .map((device) => device?.statusCode)
-      .filter((code) => Number.isInteger(code)),
-  )];
+  // With the printer model ("DS620 04.31" firmware -> "DS620", CZ-01...).
+  const seen = new Map();
+  for (const device of Array.isArray(status.dnpDevices) ? status.dnpDevices : []) {
+    if (!Number.isInteger(device?.statusCode)) continue;
+    const model = String(device.firmware || "").trim().split(/\s+/)[0] || device.vendor || null;
+    seen.set(`${device.statusCode}|${model}`, { code: device.statusCode, model });
+  }
+  const codes = [...seen.values()];
 
   if (codes.length) {
     try {
