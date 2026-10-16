@@ -53,7 +53,7 @@ const booths = {
   unknownCodesSeen: [4242],
   booths: [
     {
-      boothId: "ONLINE-FULL", type: "Signature", smartFlash: false, online: true, ageSeconds: 5, receivedAt: now,
+      boothId: "ONLINE-FULL", type: "Signature", smartFlash: false, rename: { name: "PHOTOBOOTH-27" }, online: true, ageSeconds: 5, receivedAt: now,
       status: {
         agentVersion: "1.16.0", internet: true, spooler: "Running", printerAlert: "jam", paperOutPopup: true,
         network: { type: "wifi", name: "Salle", signal: 35, latencyMs: 220, packetLoss: 33, failedHeartbeats: 1 },

@@ -604,7 +604,8 @@ function boothRow(booth) {
     class: booth.online ? "" : "offline",
     title: booth.online ? "" : `Hors ligne : dernières infos reçues le ${formatDate(booth.receivedAt)}`,
   },
-    el("td", { class: "booth" }, booth.boothId),
+    el("td", { class: "booth" }, booth.boothId,
+      renameState(booth) ? el("div", { class: "hint" }, renameState(booth)) : null),
     el("td", {}, typeCell(booth)),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
       state,
@@ -915,12 +916,81 @@ function smartFlashCard(booths) {
   );
 }
 
+// Computer names (Configuration tab, agent >= 1.33.0): the booth renames
+// itself within about a minute and Windows uses the new name from its next
+// restart (never forced). Its settings then follow it to the new name.
+function renameState(booth) {
+  if (!booth.rename) return null;
+  const next = (booth.status || {}).computerNameNext;
+  return next === booth.rename.name
+    ? `→ ${booth.rename.name} au prochain redémarrage`
+    : `→ ${booth.rename.name} (en cours d'application)`;
+}
+
+function renameRow(booth) {
+  const input = el("input", { type: "text", class: "name-input", maxLength: 15, placeholder: "Nouveau nom", spellcheck: false });
+  input.value = booth.rename ? booth.rename.name : "";
+
+  const button = el("button", {
+    type: "button",
+    class: "small",
+    onclick: () => saveRename(booth.boothId, input.value.trim(), button),
+  }, "Renommer");
+
+  const cancel = booth.rename
+    ? el("button", { type: "button", class: "small", onclick: () => saveRename(booth.boothId, "", cancel) }, "Annuler")
+    : null;
+
+  return el("tr", {},
+    el("td", { class: "booth" }, booth.boothId, booth.online ? null : el("div", { class: "hint" }, "hors ligne")),
+    el("td", {}, input),
+    el("td", { class: "nowrap" }, button, " ", cancel),
+    el("td", { class: "nowrap" }, el("span", { class: "hint" }, renameState(booth) || "")),
+  );
+}
+
+async function saveRename(boothId, name, button) {
+  if (name && !/^(?=.*[A-Za-z-])[A-Za-z0-9-]{1,15}$/.test(name)) {
+    showError("Nom d'ordinateur : 1 à 15 lettres, chiffres ou tirets, pas uniquement des chiffres.");
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    await api(`/api/booths?id=${encodeURIComponent(boothId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rename: name || null }),
+    });
+    showError("");
+  } catch (error) {
+    showError(error.message);
+  }
+  button.disabled = false;
+  loadConfig();
+}
+
+function renameCard(booths) {
+  const rows = asList(booths).filter((booth) => booth.status).map(renameRow);
+  return el("article", { class: "config-card" },
+    el("h2", {}, "Noms des ordinateurs"),
+    el("p", { class: "hint" },
+      "Le booth se renomme en 1 min environ ; Windows utilise le nouveau nom à son prochain redémarrage (jamais forcé). Ses réglages (type, Smart Flash, MIN / MAX) suivent automatiquement. Bureau à distance Chrome peut garder l'ancien nom."),
+    rows.length === 0 ? el("p", { class: "hint" }, "Aucun booth.") : el("div", { class: "table-wrap" },
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "Ordinateur"), el("th", {}, "Nouveau nom"), el("th", {}, ""), el("th", {}, "État"))),
+        el("tbody", {}, ...rows),
+      ),
+    ),
+  );
+}
+
 async function loadConfig() {
   try {
     const [data, boothsData] = await Promise.all([api("/api/printer-alerts"), api("/api/booths")]);
     dnpCodes = data.dnpCodes || dnpCodes;
     brightnessRange = boothsData.brightnessRange || brightnessRange;
-    $("config").replaceChildren(smartFlashCard(boothsData.booths), codesCard(data.codesSeen), ...asList(data.types).map(typeCard));
+    $("config").replaceChildren(smartFlashCard(boothsData.booths), renameCard(boothsData.booths), codesCard(data.codesSeen), ...asList(data.types).map(typeCard));
     configLoaded = true;
   } catch (error) {
     showError(error.message);

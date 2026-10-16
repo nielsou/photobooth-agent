@@ -1,6 +1,6 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
-import { saveBoothStatus, recordDnpCodes } from "../lib/store.js";
+import { saveBoothStatus, recordDnpCodes, migrateBooth } from "../lib/store.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -59,6 +59,17 @@ export async function POST(request) {
   }
 
   const receivedAt = new Date().toISOString();
+
+  // Renamed booth (agent >= 1.33.0): its settings move to the new name.
+  const previousBoothId = typeof status.previousBoothId === "string" ? status.previousBoothId.trim() : "";
+  if (previousBoothId && previousBoothId !== boothId && BOOTH_ID_PATTERN.test(previousBoothId)) {
+    try {
+      await migrateBooth(previousBoothId, boothId);
+    } catch (error) {
+      console.error(error);
+      return json({ error: "Storage unavailable" }, 503);
+    }
+  }
 
   try {
     await saveBoothStatus(boothId, { boothId, receivedAt, status });

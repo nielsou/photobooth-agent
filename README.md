@@ -239,3 +239,13 @@ Notepad, Terminal, Snipping Tool, Quick Assist, Chrome Remote Desktop.
 Once per launch of dslrBooth / LumaBooth, if its window opens "windowed" during its
 first minute, the popup helper maximizes it (dslrBooth ignores the shortcut's
 "Maximized"); never again for that launch, so the operator can resize it.
+
+### Renaming a computer
+
+Configuration tab, "Noms des ordinateurs": the new name (1 to 15 letters, digits or
+hyphens, unique in the fleet) is sent by `/api/booth-config` (`rename`). The agent runs
+`Rename-Computer` within about a minute (cancelling it in the dashboard before the
+restart puts the current name back); Windows uses the new name from the next restart,
+which the agent never forces. The agent then sends `previousBoothId` with its heartbeat
+and the server moves the booth's type, Smart Flash, MIN / MAX and inventory to the new
+name and drops the old entry (`migrateBooth`).

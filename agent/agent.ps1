@@ -503,6 +503,8 @@ function Get-AgentStatus {
         kiosk             = $KioskStatus
         installs          = $InstallStatus
         cleanup           = $CleanupStatus
+        previousBoothId   = $PreviousBoothId
+        computerNameNext  = $(try { $Next = Get-PendingComputerName; if ($Next -and $Next -ne $env:COMPUTERNAME) { $Next } else { $null } } catch { $null })
         hardware          = $(try { Get-HardwareInfo } catch { $null })
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
@@ -706,6 +708,7 @@ function Update-BoothConfig {
     $script:StartScreenVideo = $Body.startScreenVideo
     $script:LightsScript = $Body.lightsScript
     $script:Kiosk = [bool]$Body.kiosk
+    $script:RenameTo = $Body.rename
     $script:InstallPrograms = @($Body.installPrograms | Where-Object { $_ })
     $script:RemoveApps = @($Body.removeApps | Where-Object { $_ })
     $script:RemovePrograms = @($Body.removePrograms | Where-Object { $_ })
@@ -1488,6 +1491,59 @@ function Get-LightsDiagnostics {
 }
 
 # --------------------------------------------------
+# COMPUTER NAME
+# --------------------------------------------------
+
+# Rename requested in the dashboard (booth-config "rename"). Windows applies a
+# new computer name at the next restart, which the agent never forces (an
+# event may be running). rename.json remembers the old name: once the PC runs
+# under the new one, the heartbeat carries previousBoothId and the dashboard
+# moves the booth's settings (type, Smart Flash...) to the new name.
+$RenameFile = "$AgentDir\rename.json"
+$RenameTo = $null
+$PreviousBoothId = $null
+
+# Name Windows will use after the next restart (= current name if none).
+function Get-PendingComputerName {
+    (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName" -Name ComputerName -ErrorAction SilentlyContinue).ComputerName
+}
+
+function Update-ComputerName {
+    $Target = "$($script:RenameTo)".Trim().ToUpperInvariant()
+    $Pending = Get-PendingComputerName
+
+    if (-not $Target) {
+        # Cancelled in the dashboard before the restart: keep the current name.
+        if ($Pending -and $Pending -ne $env:COMPUTERNAME -and (Test-Path $RenameFile)) {
+            Rename-Computer -NewName $env:COMPUTERNAME -Force -ErrorAction Stop -WarningAction SilentlyContinue
+            Remove-Item $RenameFile -Force -ErrorAction SilentlyContinue
+            Write-Log "Computer rename cancelled: stays $env:COMPUTERNAME"
+        }
+        return
+    }
+
+    if ($Target -eq $env:COMPUTERNAME -or $Target -eq $Pending) { return }
+
+    Rename-Computer -NewName $Target -Force -ErrorAction Stop -WarningAction SilentlyContinue
+    [PSCustomObject]@{ from = $env:COMPUTERNAME; to = $Target; at = (Get-Date).ToUniversalTime().ToString("o") } |
+        ConvertTo-Json | Set-Content -Path $RenameFile -Encoding UTF8
+    Write-Log "Computer renamed $env:COMPUTERNAME -> $Target (applied at the next restart)"
+}
+
+# At start: running under the new name since this boot? Report the old one.
+function Read-RenameFile {
+    if (-not (Test-Path $RenameFile)) { return }
+    try {
+        $Rename = Get-Content -Path $RenameFile -Raw | ConvertFrom-Json
+        if ($Rename.to -eq $env:COMPUTERNAME -and $Rename.from -ne $env:COMPUTERNAME) {
+            $script:PreviousBoothId = "$($Rename.from)"
+            Write-Log "Renamed from $($Rename.from): the dashboard moves its settings"
+        }
+    }
+    catch { }
+}
+
+# --------------------------------------------------
 # HARDWARE / BIOS
 # --------------------------------------------------
 
@@ -2240,6 +2296,7 @@ catch {
 }
 
 Restore-SetupStatus
+Read-RenameFile
 
 try {
     Install-PopupHelper
@@ -2319,6 +2376,12 @@ while ($true) {
             if ($Result -eq "sent") {
                 $LastHeartbeatMs = [int]$Stopwatch.ElapsedMilliseconds
                 $FailedHeartbeats = 0
+
+                # The dashboard moved the old name's settings with this heartbeat.
+                if ($PreviousBoothId) {
+                    $PreviousBoothId = $null
+                    Remove-Item $RenameFile -Force -ErrorAction SilentlyContinue
+                }
             }
 
             Write-Log "Remote heartbeat $Result"
@@ -2339,6 +2402,11 @@ while ($true) {
         if (-not $SetupDone.config) {
             try { Update-BoothConfig; $SetupDone.config = $true }
             catch { Write-Log "Booth config error: $($_.Exception.Message)" }
+
+            if ($SetupDone.config) {
+                try { Update-ComputerName }
+                catch { Write-Log "Computer rename error: $($_.Exception.Message)" }
+            }
         }
 
         # Right after the config: quick, and the lights matter during an event.
@@ -2428,7 +2496,7 @@ while ($true) {
     # in the dashboard reaches the lights script without restarting the booth.
     if ($SetupDone.config -and (Get-Date) -ge $NextConfigCheck) {
         $NextConfigCheck = (Get-Date).AddMinutes(1)
-        try { Update-BoothConfig }
+        try { Update-BoothConfig; Update-ComputerName }
         catch { Write-Log "Booth config check error: $($_.Exception.Message)" }
     }
 

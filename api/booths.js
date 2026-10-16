@@ -1,7 +1,10 @@
 import { authorizeDashboard } from "../lib/dashboard-auth.js";
 import { json, BOOTH_ID_PATTERN } from "../lib/http.js";
 import { BOOTH_TYPES, DNP_CODES, BRIGHTNESS_RANGE } from "../lib/printer-alerts.js";
-import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType, listDnpCodesSeen, getSmartFlashOff, setSmartFlash, getLightsSettings, setLightsSettings } from "../lib/store.js";
+import { listBoothStatuses, deleteBooth, getBoothTypes, assignBoothType, listDnpCodesSeen, getSmartFlashOff, setSmartFlash, getLightsSettings, setLightsSettings, getRenames, setRename } from "../lib/store.js";
+
+// Windows computer name: 1 to 15 letters, digits or hyphens, not only digits.
+const COMPUTER_NAME_PATTERN = /^(?=.*[A-Z-])[A-Z0-9-]{1,15}$/;
 
 // The agent posts every 30 s; a booth is offline after 3 missed heartbeats.
 const OFFLINE_AFTER_SECONDS = 90;
@@ -15,11 +18,12 @@ export async function GET(request) {
   let codesSeen;
   let smartFlashOff;
   let lightsSettings;
+  let renames;
   try {
     const denied = await authorizeDashboard(request);
     if (denied) return denied;
 
-    [records, types, codesSeen, smartFlashOff, lightsSettings] = await Promise.all([listBoothStatuses(), getBoothTypes(), listDnpCodesSeen(), getSmartFlashOff(), getLightsSettings()]);
+    [records, types, codesSeen, smartFlashOff, lightsSettings, renames] = await Promise.all([listBoothStatuses(), getBoothTypes(), listDnpCodesSeen(), getSmartFlashOff(), getLightsSettings(), getRenames()]);
   } catch (error) {
     console.error(error);
     return json({ error: "Storage unavailable" }, 503);
@@ -37,6 +41,7 @@ export async function GET(request) {
         type: types[record.boothId] || null,
         smartFlash: !(record.boothId in smartFlashOff),
         lightsSettings: lightsSettings[record.boothId] || null,
+        rename: renames[record.boothId] || null,
         ageSeconds,
         online: ageSeconds !== null && ageSeconds <= OFFLINE_AFTER_SECONDS,
       };
@@ -77,7 +82,7 @@ export async function DELETE(request) {
 }
 
 // PATCH /api/booths?id=<boothId>  body: { "type": "Signature" }, { "smartFlash": false }
-//   or { "lightsMin": 9, "lightsMax": 80 }
+//   or { "lightsMin": 9, "lightsMax": 80 } or { "rename": "PHOTOBOOTH-27" } (null cancels)
 // Authorization: Bearer <DASHBOARD_TOKEN>
 // Assigns a type to a booth that has none. Once set, it cannot be changed
 // from the dashboard (fix mistakes directly in Redis). Smart Flash can be
@@ -94,6 +99,32 @@ export async function PATCH(request) {
     }
 
     const body = await request.json().catch(() => null);
+
+    if (body && "rename" in body) {
+      if (body.rename == null || body.rename === "") {
+        await setRename(boothId, null);
+        return json({ ok: true, boothId, rename: null });
+      }
+
+      const name = String(body.rename).trim().toUpperCase();
+      if (!COMPUTER_NAME_PATTERN.test(name)) {
+        return json({ error: "Nom d'ordinateur : 1 à 15 lettres, chiffres ou tirets, pas uniquement des chiffres." }, 400);
+      }
+      if (name === boothId.toUpperCase()) {
+        await setRename(boothId, null);
+        return json({ ok: true, boothId, rename: null });
+      }
+
+      const [records, renames] = await Promise.all([listBoothStatuses(), getRenames()]);
+      const taken = records.some((record) => record.boothId.toUpperCase() === name) ||
+        Object.entries(renames).some(([id, entry]) => id !== boothId && entry.name === name);
+      if (taken) {
+        return json({ error: `Le nom ${name} est déjà utilisé par un autre booth.` }, 409);
+      }
+
+      await setRename(boothId, name);
+      return json({ ok: true, boothId, rename: name });
+    }
 
     if (body && ("lightsMin" in body || "lightsMax" in body)) {
       const { lightsMin: min, lightsMax: max } = body;
