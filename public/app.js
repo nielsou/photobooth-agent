@@ -564,7 +564,7 @@ function networkCell(s) {
 }
 
 // Printer alert popups shown on the booth screen (agent >= 1.10.0).
-const POPUP_LABELS = { paper: "Plus de papier", jam: "Bourrage", open: "Imprimante ouverte", error: "Problème d'imprimante" };
+const POPUP_LABELS = { paper: "Plus de papier", paperWrong: "Papier mal installé", jam: "Bourrage", open: "Imprimante ouverte", error: "Problème d'imprimante" };
 
 // Booth-wide printing notes shown above the printers list: Windows print
 // service stopped (nothing prints at all), popup currently on the booth screen.
