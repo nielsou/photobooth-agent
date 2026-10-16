@@ -583,15 +583,21 @@ function boothPrinterNotes(spooler, popupShown) {
   return notes.length ? el("div", { class: "printer-notes" }, ...notes) : null;
 }
 
-// Booth camera (agent >= 1.36.0): the one dslrBooth last connected, present
-// or not in Windows right now (switched off / booth not opened).
-function cameraNote(camera) {
-  if (!camera || camera.ok == null) return null;
-  const title = `Caméra du booth : ${camera.expected}
-Vue par Windows : ${asList(camera.present).join(", ") || "aucune"}`;
-  return camera.ok
-    ? el("div", { class: "hint", title }, "Caméra OK")
-    : el("div", { title: `${title}\nOuvrir le booth et allumer la caméra, puis relancer dslrBooth.` }, badge("Caméra absente", "bad"));
+// Caméra column (agent >= 1.36.0): the camera dslrBooth last connected,
+// present or not in Windows right now (switched off / booth not opened).
+function cameraCell(camera) {
+  if (camera === undefined) return el("span", { class: "hint" }, "?");
+  if (!camera || !camera.expected) {
+    const seen = asList(camera && camera.present);
+    return el("span", { class: "hint", title: `Vue par Windows : ${seen.join(", ") || "aucune"}` }, "Jamais utilisée par dslrBooth");
+  }
+  const title = [
+    `Caméra du booth : ${camera.expected}`,
+    `Vue par Windows : ${asList(camera.present).join(", ") || "aucune"}`,
+    camera.ok ? null : "Ouvrir le booth et allumer la caméra, puis relancer dslrBooth.",
+  ].filter(Boolean).join("\n");
+  return el("ul", { class: "printers", title },
+    el("li", {}, badge(camera.ok ? "Branchée" : "Absente", camera.ok ? "ok" : "bad"), el("span", {}, camera.expected)));
 }
 
 function boothRow(booth) {
@@ -620,9 +626,9 @@ function boothRow(booth) {
     el("td", {}, typeCell(booth)),
     el("td", { class: "nowrap", title: formatDate(booth.receivedAt) },
       state,
-      el("div", { class: "hint" }, formatAge(booth.ageSeconds)),
-      booth.online ? cameraNote(s.camera) : null),
+      el("div", { class: "hint" }, formatAge(booth.ageSeconds))),
     el("td", {}, arduinoCell(s.arduino, s.lights, booth.smartFlash), lightsNote(s.lights, s.arduino)),
+    el("td", {}, cameraCell(s.camera)),
     el("td", { class: "printers-cell" },
       boothPrinterNotes(s.spooler, s.printerAlert || (s.paperOutPopup ? "paper" : null)),
       printersCell(booth.boothId, s.printers)),
