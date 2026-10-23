@@ -516,7 +516,6 @@ function programsCell(s) {
     cleanupCheck(s.cleanup),
     ...installChecks(s.installs),
     autoLogonCheck(s.autoLogon),
-    biosCheck(s.hardware),
   ].filter(Boolean);
   return el("ul", { class: "checks" }, ...items);
 }
