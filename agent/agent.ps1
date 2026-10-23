@@ -506,6 +506,7 @@ function Get-AgentStatus {
         previousBoothId   = $PreviousBoothId
         computerNameNext  = $(try { $Next = Get-PendingComputerName; if ($Next -and $Next -ne $env:COMPUTERNAME) { $Next } else { $null } } catch { $null })
         camera            = $(try { Get-CameraStatus } catch { $null })
+        autoLogon         = $(try { Get-AutoLogonStatus } catch { $null })
         hardware          = $(try { Get-HardwareInfo } catch { $null })
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
@@ -1642,6 +1643,7 @@ function Update-ComputerName {
             Rename-Computer -NewName $env:COMPUTERNAME -Force -ErrorAction Stop -WarningAction SilentlyContinue
             Remove-Item $RenameFile -Force -ErrorAction SilentlyContinue
             Write-Log "Computer rename cancelled: stays $env:COMPUTERNAME"
+            Repair-AutoLogon
         }
         return
     }
@@ -1652,6 +1654,49 @@ function Update-ComputerName {
     [PSCustomObject]@{ from = $env:COMPUTERNAME; to = $Target; at = (Get-Date).ToUniversalTime().ToString("o") } |
         ConvertTo-Json | Set-Content -Path $RenameFile -Encoding UTF8
     Write-Log "Computer renamed $env:COMPUTERNAME -> $Target (applied at the next restart)"
+
+    # The automatic sign-in must name the new computer from the next restart.
+    Repair-AutoLogon
+}
+
+# Automatic sign-in of a local account stores the computer name with the user
+# (Winlogon DefaultDomainName): after a rename it still names the old computer,
+# the sign-in fails and Windows asks for the password. Keep it on the name the
+# PC has (or will have after the restart, when a rename is pending). Not for
+# domain-joined PCs. Run at start and after each rename request.
+$WinlogonKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+
+function Repair-AutoLogon {
+    $Winlogon = Get-ItemProperty -Path $WinlogonKey -ErrorAction SilentlyContinue
+    if (-not $Winlogon -or "$($Winlogon.AutoAdminLogon)" -ne "1") { return }
+    if ((Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).PartOfDomain) { return }
+
+    $Target = Get-PendingComputerName
+    if (-not $Target) { $Target = $env:COMPUTERNAME }
+
+    foreach ($Name in @("DefaultDomainName", "AltDefaultDomainName")) {
+        $Current = "$($Winlogon.$Name)"
+        if ($Current -and $Current -ne $Target) {
+            Set-ItemProperty -Path $WinlogonKey -Name $Name -Value $Target
+            Write-Log "Automatic sign-in: $Name $Current -> $Target"
+        }
+    }
+}
+
+# Reported in the status: why a booth may ask for a password at power-on.
+function Get-AutoLogonStatus {
+    $Winlogon = Get-ItemProperty -Path $WinlogonKey -ErrorAction SilentlyContinue
+    if (-not $Winlogon) { return $null }
+    $Target = Get-PendingComputerName
+    if (-not $Target) { $Target = $env:COMPUTERNAME }
+    [PSCustomObject]@{
+        enabled     = "$($Winlogon.AutoAdminLogon)" -eq "1"
+        user        = $(if ($Winlogon.DefaultUserName) { "$($Winlogon.DefaultUserName)" } else { $null })
+        domain      = $(if ($Winlogon.DefaultDomainName) { "$($Winlogon.DefaultDomainName)" } else { $null })
+        # Password in the registry (else maybe an LSA secret, not readable)
+        registryPwd = [bool]($Winlogon.PSObject.Properties.Name -contains "DefaultPassword")
+        domainOk    = -not $Winlogon.DefaultDomainName -or "$($Winlogon.DefaultDomainName)" -eq $Target
+    }
 }
 
 # At start: running under the new name since this boot? Report the old one.
@@ -2421,6 +2466,7 @@ catch {
 
 Restore-SetupStatus
 Read-RenameFile
+try { Repair-AutoLogon } catch { Write-Log "Automatic sign-in repair error: $($_.Exception.Message)" }
 
 try {
     Install-PopupHelper

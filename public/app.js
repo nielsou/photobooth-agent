@@ -495,6 +495,16 @@ function biosCheck(hardware) {
   return check(on, on ? "BIOS : redémarre au retour du courant" : `BIOS : ne redémarre pas seul (${value})`, `${model} · ${hardware.source}`);
 }
 
+// Automatic sign-in at power-on (agent >= 1.38.0): without it, or when it
+// still names the computer's old name (after a rename), Windows asks for the
+// password. The agent repairs the old name at its next start.
+function autoLogonCheck(autoLogon) {
+  if (!autoLogon) return null;
+  if (!autoLogon.enabled) return check(null, "Session auto : désactivée", "Windows demande le mot de passe au démarrage");
+  if (!autoLogon.domainOk) return check(false, `Session auto : ancien nom (${autoLogon.domain})`, "Corrigé par l'agent : sans mot de passe au démarrage suivant");
+  return check(true, `Session auto (${autoLogon.user || "?"})`);
+}
+
 function programsCell(s) {
   const items = [
     ...softwareChecks(s.software),
@@ -505,6 +515,7 @@ function programsCell(s) {
     kioskCheck(s.kiosk),
     cleanupCheck(s.cleanup),
     ...installChecks(s.installs),
+    autoLogonCheck(s.autoLogon),
     biosCheck(s.hardware),
   ].filter(Boolean);
   return el("ul", { class: "checks" }, ...items);
