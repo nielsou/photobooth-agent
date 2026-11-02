@@ -74,7 +74,7 @@ const booths = {
         displays: {
           monitors: [
             { maker: "IVM", model: "PL2492H", serial: "1234", connection: "HDMI", active: true, instance: "DISPLAY\\A" },
-            { maker: "IVM", model: "PL2492H", serial: "1234", connection: "DisplayPort", active: true, instance: "DISPLAY\\B" },
+            { maker: "IVM", model: "PL2492H", serial: "16843009", connection: "DisplayPort", active: true, instance: "DISPLAY\\B" },
           ],
           adapters: [{ name: "Intel(R) UHD Graphics", status: "OK" }, { name: "Parsec Virtual Display Adapter", status: "OK" }],
         },

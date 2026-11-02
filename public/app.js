@@ -566,12 +566,15 @@ function displaysCheck(displays) {
   const virtual = [...adapters.map((a) => a.name), ...monitors.map((m) => m.connection)].some((n) => VIRTUAL_DISPLAY.test(n || ""));
   if (monitors.length <= 1 && !virtual) return null;
 
-  const sameScreen = monitors.length > 1 && new Set(monitors.map((m) => `${m.maker}|${m.model}|${m.serial}`)).size === 1;
+  // Each input of a screen has its own EDID: on PRO-31 the same Realtek "FHD"
+  // screen showed up as RTK0156 on USB-C (DisplayPort) and RTK1850 on HDMI,
+  // with different serials. Same maker and model is enough to say so.
+  const sameScreen = monitors.length > 1 && new Set(monitors.map((m) => `${m.maker}|${m.model}`)).size === 1;
   const text = sameScreen ? `Écran vu ${monitors.length} fois` : virtual ? "Écran virtuel détecté" : `${monitors.length} écrans détectés`;
   const title = [
     ...monitors.map((m) => `${m.maker} ${m.model} (n° ${m.serial || "?"}) : ${m.connection || "connexion ?"}`),
     ...adapters.map((a) => `Carte graphique : ${a.name}`),
-    sameScreen ? "Même écran branché par deux câbles vidéo (HDMI + USB-C ?) : Win+P → « Écran PC uniquement » ou débrancher la vidéo en trop" : null,
+    sameScreen ? "Même écran branché par deux câbles vidéo (HDMI + USB-C) : débrancher le HDMI, l'USB-C fait image et tactile (à défaut Win+P → « Écran PC uniquement »)" : null,
     virtual ? "Pilote d'écran virtuel (logiciel de prise en main à distance) : à désinstaller" : null,
   ].filter(Boolean).join("\n");
   return check(false, text, title);

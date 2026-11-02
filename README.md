@@ -177,8 +177,10 @@ A booth has one screen. The agent reports the screens Windows has connected
 (`displays.monitors`: EDID maker, model, serial, and connection: HDMI, DisplayPort,
 Indirect for a virtual one) and the display adapters (`displays.adapters`), re-read
 every 5 min (agent >= 1.41.0). The dashboard shows a line only when something is off:
-the same screen seen twice (same model and serial: HDMI + USB-C cables, seen on PRO-31),
-several screens, or a virtual display driver left by remote-control software.
+the same screen seen twice (HDMI + USB-C cables), several screens, or a virtual display
+driver left by remote-control software. Each input of a screen has its own EDID: on
+PRO-31 one Realtek "FHD" touchscreen showed up as RTK0156 on USB-C (DisplayPort) and
+RTK1850 on HDMI, with different serials, so "same screen" means same maker and model.
 
 ### Booth setup at power-on
 
