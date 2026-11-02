@@ -409,13 +409,45 @@ function softwareChecks(software) {
   });
 }
 
-// Fonts from the shared Drive folder (agent >= 1.14.0).
+// Fonts from the shared Drive folder (agent >= 1.14.0); the reason of each
+// failure and an hourly retry since agent 1.39.0.
 function fontsCheck(fonts) {
   if (!fonts) return null;
   const missing = asList(fonts.missing);
-  return missing.length === 0
-    ? check(true, "Polices", `${fonts.expected} polices vérifiées le ${formatDate(fonts.checkedAt)}`)
-    : check(false, `Polices : ${missing.length} manquante${missing.length > 1 ? "s" : ""}`, `Non installées : ${missing.join(", ")}`);
+  if (missing.length === 0) return check(true, "Polices", `${fonts.expected} polices vérifiées le ${formatDate(fonts.checkedAt)}`);
+  const errors = asList(fonts.errors);
+  const title = [
+    ...(errors.length ? errors.map((e) => `${e.name} : ${e.error}`) : [`Non installées : ${missing.join(", ")}`]),
+    `Vérifié le ${formatDate(fonts.checkedAt)}${errors.length ? ", nouvel essai toutes les heures" : ""}`,
+  ].join("\n");
+  return check(false, `Polices : ${missing.length} manquante${missing.length > 1 ? "s" : ""}`, title);
+}
+
+// The booth type's printer plugged in but without a print queue (agent
+// repairs it), or a plugged-in printer its driver does not know (agent >=
+// 1.39.0). Nothing when the printer has its queue or is not plugged in.
+function printerSetupChecks(setup, repair) {
+  return asList(setup).map((p) => {
+    if (p.device && p.queue) return null;
+
+    if (p.device) {
+      const attempt = repair && repair.driver === p.driver
+        ? repair.ok
+          ? `Réparé le ${formatDate(repair.at)} (${repair.action === "queue" ? "file créée" : "re-scan Windows"})`
+          : `Réparation du ${formatDate(repair.at)} en échec : ${repair.error}`
+        : "Réparation automatique en attente (au plus toutes les 15 min)";
+      const where = `${p.device} sur ${p.port || "port inconnu"}${p.problemCode ? ` (code Windows ${p.problemCode})` : ""}`;
+      return check(false, `${p.driver} branchée sans file d'impression`, `${where}\n${attempt}`);
+    }
+
+    const others = asList(p.others);
+    if (others.length === 0) return null;
+    const title = [
+      ...others.map((o) => `${o.name} : ${asList(o.hardwareIds).join(", ")}`),
+      `Le pilote ${p.driver} n'accepte que ${p.hardwareId}`,
+    ].join("\n");
+    return check(false, `Imprimante non reconnue par le pilote ${p.driver}`, title);
+  }).filter(Boolean);
 }
 
 // Drivers the booth type needs (agent >= 1.15.0); "manual" ones (Citizen)
@@ -443,7 +475,7 @@ function videoCheck(video) {
 
 // Kiosk settings applied at power-on on booths (agent >= 1.22.0): no sleep,
 // lock, screensaver, notifications; startup shortcut maximized.
-const KIOSK_PARTS = { power: "veille et écran", updates: "redémarrages Windows Update", users: "écran de veille et notifications", shortcuts: "raccourci de démarrage" };
+const KIOSK_PARTS = { power: "veille et écran", updates: "redémarrages Windows Update", oobe: "écrans de configuration après mise à jour", users: "écran de veille et notifications", shortcuts: "raccourci de démarrage" };
 
 function kioskCheck(kiosk) {
   if (!kiosk) return null;
@@ -511,6 +543,7 @@ function programsCell(s) {
     check(Boolean(s.agentVersion), `Agent ${s.agentVersion || "?"}`),
     fontsCheck(s.fonts),
     ...driverChecks(s.drivers),
+    ...printerSetupChecks(s.printerSetup, s.printerRepair),
     videoCheck(s.startScreenVideo),
     kioskCheck(s.kiosk),
     cleanupCheck(s.cleanup),

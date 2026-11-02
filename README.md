@@ -133,6 +133,14 @@ installs it for all users (`C:\Windows\Fonts` + HKLM registry), once per power-o
 (boot or resume). Add a font to the folder and every booth gets it at its next start. Apps already running (e.g.
 dslrBooth) only see new fonts after a restart.
 
+A font file already in `C:\Windows\Fonts` is never overwritten (Windows keeps it
+locked, and system fonts such as `gabriola.ttf` or `cour.ttf` belong to
+TrustedInstaller): the same file is only registered, a different one is replaced only
+when Windows lets it. A registry entry belonging to another file (e.g. the system's
+`Palatino Linotype (TrueType)` = `pala.ttf`) is never taken over: ours gets its own
+name. Each failure is reported with its reason (`fonts.errors`, dashboard tooltip) and
+retried every hour (agent >= 1.39.0).
+
 ### Printer drivers
 
 `lib/printer-alerts.js` (`PRINTER_DRIVERS`) lists the printer drivers each booth type
@@ -142,6 +150,17 @@ one and its catalog is validly signed by the vendor; the dashboard shows the res
 To ship a new driver version, upload the zip and update its Drive id and SHA-256.
 The Citizen CZ-01 driver (Cinebooth 150) is an unsigned InstallShield setup and is
 not installed automatically.
+
+A printer plugged in **before** its driver was installed gets no print queue: Windows
+already gave up on the device and does not retry by itself. Each printer driver
+entry has the `hardwareId` of its INF (DP-DS620: `USBPRINT\Dai_Nippon_Printing_C84D`,
+the only one in `DPDS620.inf`). The agent reports the USB printers Windows sees
+(`printerDevices`: hardware IDs, USB port, problem code) and, per driver, whether its
+printer is plugged in and has a queue (`printerSetup`). A matching printer without a
+queue is repaired at most every 15 min: `pnputil /scan-devices`, then if still nothing
+`Add-Printer` on its USB port (`printerRepair`). A plugged-in printer that matches no
+driver (another DNP model) is shown as "non reconnue" with its hardware IDs. The
+`hardwareId` lives server-side: fixing it needs no agent release.
 
 ### Booth setup at power-on
 
@@ -203,7 +222,9 @@ station (`KIOSK_TYPES`). At power-on such a booth then: never sleeps, hibernates
 turns its screen off, asks no sign-in on wake-up (powercfg, AC and DC); turns the
 screensaver off for every user, also as a user policy (hives of users who are not
 logged on are loaded); turns notifications and Windows tips/suggestions off; does not
-restart for Windows Update while someone is logged on; sets the dslrBooth/LumaBooth
+restart for Windows Update while someone is logged on; does not replay the "finish
+setting up your PC" / privacy screens after a feature update (`DisablePrivacyExperience`
+policy; the per-user SCOOBE switch does not cover them); sets the dslrBooth/LumaBooth
 shortcuts of the Startup folders to "Maximized". The result is reported in `kiosk`
 (with the automatic sign-in user, read only) and shown in the "Logiciel" column.
 User passwords and automatic sign-in are not changed: that would need a password in

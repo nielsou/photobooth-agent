@@ -440,6 +440,38 @@ function Get-AgentStatus {
         Write-Log "Printer detection error: $($_.Exception.Message)"
     }
 
+    # USB printers as Windows sees them, and for each printer driver of the
+    # booth type: is its printer plugged in, and does it have a queue?
+    $PrinterDevices = @()
+    $PrinterSetup = @()
+
+    try {
+        $PrinterDevices = @(Get-PrinterDevices)
+
+        foreach ($Driver in @($script:DriversConfig | Where-Object { $_ -and $_.hardwareId -and $_.printerDriverName -and $_.kind -ne "device" })) {
+            $Device = @($PrinterDevices | Where-Object { @($_.hardwareIds) -contains $Driver.hardwareId }) | Select-Object -First 1
+            $Queue = @($PrinterList | Where-Object { $_.driver -eq $Driver.printerDriverName }) | Select-Object -First 1
+            $Others = @($PrinterDevices | Where-Object { -not (@($_.hardwareIds) -contains $Driver.hardwareId) })
+
+            $DeviceName = $null; $DevicePort = $null; $DeviceProblem = $null; $QueueName = $null
+            if ($Device) { $DeviceName = $Device.name; $DevicePort = $Device.port; $DeviceProblem = $Device.problemCode }
+            if ($Queue) { $QueueName = $Queue.name }
+
+            $PrinterSetup += [PSCustomObject]@{
+                driver      = $Driver.printerDriverName
+                hardwareId  = $Driver.hardwareId
+                device      = $DeviceName
+                port        = $DevicePort
+                problemCode = $DeviceProblem
+                queue       = $QueueName
+                others      = @($Others | ForEach-Object { [PSCustomObject]@{ name = $_.name; hardwareIds = $_.hardwareIds } })
+            }
+        }
+    }
+    catch {
+        Write-Log "Printer devices error: $($_.Exception.Message)"
+    }
+
     # DNP media counter, attached to the connected DNP queue(s)
     $DnpDevices = @()
 
@@ -513,6 +545,9 @@ function Get-AgentStatus {
         printers          = $PrinterList
         dnpDevices        = $DnpDevices
         usbPrintDevices   = $UsbPrintDevices
+        printerDevices    = $PrinterDevices
+        printerSetup      = $PrinterSetup
+        printerRepair     = $script:PrinterRepair
         paperOutPopup     = $AlertShown
         printerAlert      = $AlertId
         popupHelper       = $HelperState
@@ -984,13 +1019,23 @@ function Install-FontFile {
     $Name = [IO.Path]::GetFileName($Path)
     $Target = Join-Path $FontsDir $Name
 
-    Copy-Item -Path $Path -Destination $Target -Force -ErrorAction Stop
+    # A file already in C:\Windows\Fonts is loaded (locked) by Windows: copying
+    # over it fails. The same file (same size) only needs registering; a
+    # different one is replaced when possible (Drive update), else kept.
+    if (-not (Test-Path $Target)) {
+        Copy-Item -Path $Path -Destination $Target -Force -ErrorAction Stop
+    }
+    elseif ((Get-Item $Target).Length -ne (Get-Item $Path).Length) {
+        try { Copy-Item -Path $Path -Destination $Target -Force -ErrorAction Stop }
+        catch { Write-Log "Font $($Name): existing $Target kept (in use): $($_.Exception.Message)" }
+    }
 
     # Registry value name: the font's family name, as Windows does.
     $Family = $null
     try {
+        # Read from the downloaded file: the one in C:\Windows\Fonts may be locked.
         $Collection = New-Object System.Drawing.Text.PrivateFontCollection
-        $Collection.AddFontFile($Target)
+        $Collection.AddFontFile($Path)
         $Family = $Collection.Families[0].Name
         $Collection.Dispose()
     }
@@ -999,7 +1044,20 @@ function Install-FontFile {
     if (-not $Family) { $Family = [IO.Path]::GetFileNameWithoutExtension($Name) }
     $Kind = if ($Name -match '\.otf$') { "OpenType" } else { "TrueType" }
 
-    New-ItemProperty -Path $FontsRegPath -Name "$Family ($Kind)" -Value $Name -PropertyType String -Force -ErrorAction Stop | Out-Null
+    # Never take over another file's entry (e.g. "Palatino Linotype (TrueType)"
+    # = pala.ttf, a system font): Windows loads every file listed whatever the
+    # value name, so a name of our own is enough.
+    # (Read without -Name, which takes wildcards; registry value names ignore
+    # case, so the file name is added to stay distinct.)
+    $ValueName = "$Family ($Kind)"
+    $Current = $null
+    $Props = Get-ItemProperty -Path $FontsRegPath -ErrorAction SilentlyContinue
+    if ($Props -and $Props.PSObject.Properties[$ValueName]) { $Current = $Props.PSObject.Properties[$ValueName].Value }
+    if ($Current -and [IO.Path]::GetFileName("$Current") -ne $Name) {
+        $ValueName = "$Family - $Name ($Kind)"
+    }
+
+    New-ItemProperty -Path $FontsRegPath -Name $ValueName -Value $Name -PropertyType String -Force -ErrorAction Stop | Out-Null
     [void]$Registered.Add($Name.ToLowerInvariant())
     Write-Log "Font installed: $Name ($Family)"
 }
@@ -1028,6 +1086,7 @@ function Install-Fonts {
     New-Item -ItemType Directory -Path $Temp -Force | Out-Null
 
     $Missing = @()
+    $FontErrors = @()
     $Count = 0
 
     foreach ($Font in @($List.fonts)) {
@@ -1073,6 +1132,7 @@ function Install-Fonts {
         }
         catch {
             $Missing += $Font.name
+            $FontErrors += [PSCustomObject]@{ name = $Font.name; error = $_.Exception.Message }
             Write-Log "Font error ($($Font.name)): $($_.Exception.Message)"
         }
     }
@@ -1080,6 +1140,7 @@ function Install-Fonts {
     $script:FontsStatus = [PSCustomObject]@{
         expected  = $Count
         missing   = $Missing
+        errors    = $FontErrors
         checkedAt = (Get-Date).ToUniversalTime().ToString("o")
     }
 }
@@ -1230,6 +1291,89 @@ function Install-PrinterDrivers {
     }
 
     $script:DriversStatus = $Results
+}
+
+# USB printers as Windows enumerates them (USBPRINT\...): hardware IDs, USB
+# port and PnP problem code. A printer whose ID is not in a driver's INF never
+# gets a queue, whatever is installed (e.g. DP-DS620 only knows
+# USBPRINT\Dai_Nippon_Printing_C84D).
+function Get-PrinterDevices {
+    $Devices = @()
+
+    foreach ($Device in @(Get-CimInstance Win32_PnPEntity -Filter "DeviceID LIKE 'USBPRINT%'" -ErrorAction Stop)) {
+        $Port = $null
+        if ("$($Device.DeviceID)" -match '&(USB\d{3})$') { $Port = $Matches[1] }
+
+        $Devices += [PSCustomObject]@{
+            name        = "$($Device.Name)"
+            instanceId  = "$($Device.DeviceID)"
+            hardwareIds = @($Device.HardwareID | Where-Object { $_ })
+            port        = $Port
+            problemCode = [int]$Device.ConfigManagerErrorCode
+        }
+    }
+
+    return $Devices
+}
+
+# Last queue repair attempt, reported in the heartbeat.
+$PrinterRepair = $null
+
+# A printer plugged in before its driver was installed has no queue: Windows
+# already gave up on it and does not retry by itself. When a plugged-in printer
+# matches a driver of the booth type (hardwareId) and no queue uses that driver:
+# re-scan the devices, then if still nothing create the queue on its USB port.
+function Repair-PrinterQueues {
+    param($Devices)
+
+    foreach ($Driver in @($script:DriversConfig | Where-Object { $_ -and $_.hardwareId -and $_.printerDriverName -and $_.kind -ne "device" })) {
+
+        $DriverName = $Driver.printerDriverName
+        if (-not (Get-PrinterDriver -Name $DriverName -ErrorAction SilentlyContinue)) { continue }
+        if (@(Get-Printer -ErrorAction Stop | Where-Object { $_.DriverName -eq $DriverName }).Count -gt 0) { continue }
+
+        $Device = @($Devices | Where-Object { @($_.hardwareIds) -contains $Driver.hardwareId }) | Select-Object -First 1
+        if (-not $Device) { continue }
+
+        $Attempt = [ordered]@{
+            driver = $DriverName
+            device = $Device.instanceId
+            at     = (Get-Date).ToUniversalTime().ToString("o")
+            action = $null
+            ok     = $false
+            error  = $null
+        }
+
+        try {
+            Write-Log "Printer $DriverName plugged in without a queue: re-scanning devices"
+            & pnputil.exe /scan-devices 2>&1 | Out-Null
+            Start-Sleep -Seconds 10
+
+            if (@(Get-Printer -ErrorAction Stop | Where-Object { $_.DriverName -eq $DriverName }).Count -gt 0) {
+                $Attempt.action = "scan"
+            }
+            else {
+                if (-not $Device.port -or -not (Get-PrinterPort -Name $Device.port -ErrorAction SilentlyContinue)) {
+                    throw "USB port '$($Device.port)' not found"
+                }
+
+                $QueueName = $DriverName
+                if (Get-Printer -Name $QueueName -ErrorAction SilentlyContinue) { $QueueName = "$DriverName ($($Device.port))" }
+
+                Add-Printer -Name $QueueName -DriverName $DriverName -PortName $Device.port -ErrorAction Stop
+                $Attempt.action = "queue"
+                Write-Log "Printer queue '$QueueName' created on $($Device.port)"
+            }
+
+            $Attempt.ok = $true
+        }
+        catch {
+            $Attempt.error = $_.Exception.Message
+            Write-Log "Printer queue repair error ($DriverName): $($_.Exception.Message)"
+        }
+
+        $script:PrinterRepair = [PSCustomObject]$Attempt
+    }
 }
 
 # --------------------------------------------------
@@ -2238,6 +2382,14 @@ function Set-KioskSettings {
     }
     catch { $Errors += "updates: $($_.Exception.Message)" }
 
+    # No "finish setting up your PC" / privacy screens replayed after a Windows
+    # feature update (the per-user SCOOBE switch below does not cover them).
+    try {
+        Set-RegistryValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE" -Name "DisablePrivacyExperience" -Value 1
+        $Done += "oobe"
+    }
+    catch { $Errors += "oobe: $($_.Exception.Message)" }
+
     # Per user: screensaver off (also as a policy, so it stays off),
     # notifications and Windows tips/suggestions off.
     try {
@@ -2485,6 +2637,8 @@ $NextLightsFix = Get-Date
 $NextConfigCheck = (Get-Date).AddMinutes(1)
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
+$NextFontsRetry = (Get-Date).AddHours(1)
+$NextPrinterRepair = Get-Date
 
 # With Fast Startup, "Shut down" hibernates the system and this process just
 # resumes later: a long gap between two loop turns means the PC was off/asleep.
@@ -2632,6 +2786,22 @@ while ($true) {
             Write-Log "Booth setup done (type: $BoothType)"
             $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
         }
+    }
+
+    # Fonts that failed (Drive unreachable, file in use...): retried every hour
+    # instead of only at the next power-on.
+    if ($SetupDone.fonts -and $FontsStatus -and @($FontsStatus.missing).Count -gt 0 -and (Get-Date) -ge $NextFontsRetry) {
+        $NextFontsRetry = (Get-Date).AddHours(1)
+        try { Install-Fonts; Save-SetupStatus }
+        catch { Write-Log "Fonts retry error: $($_.Exception.Message)" }
+    }
+
+    # Printer plugged in before its driver was installed: queue repaired (see
+    # Repair-PrinterQueues), at most every 15 minutes.
+    if ($SetupDone.drivers -and $Status -and (Get-Date) -ge $NextPrinterRepair) {
+        $NextPrinterRepair = (Get-Date).AddMinutes(15)
+        try { Repair-PrinterQueues -Devices $Status.printerDevices }
+        catch { Write-Log "Printer queue repair error: $($_.Exception.Message)" }
     }
 
     if ($SetupDone.config -and -not $BoothType -and (Get-Date) -ge $NextUntypedCheck) {
