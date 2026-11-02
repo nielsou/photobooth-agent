@@ -162,6 +162,15 @@ queue is repaired at most every 15 min: `pnputil /scan-devices`, then if still n
 driver (another DNP model) is shown as "non reconnue" with its hardware IDs. The
 `hardwareId` lives server-side: fixing it needs no agent release.
 
+Seen on PRO-31 (DS620): the USB device was there (`usbprint`, DNP queries answered)
+but Windows had never created its `USBPRINT\...` node, so there was no USB port and
+nothing to repair. When a driver entry also has the `usbId` of its USB device
+(DP-DS620: `VID_1452&PID_8B01`) and no USBPRINT node matches, the agent restarts that
+USB device once per agent run (`pnputil /restart-device`, the software equivalent of
+unplugging it), then carries on with the repair above. Each such printer's USB node,
+its children and every USBPRINT node Windows ever created are reported in
+`printerSetup[].usb` (agent >= 1.40.0).
+
 ### Booth setup at power-on
 
 Booth config (type, popups), printer drivers and fonts are applied once per power-on

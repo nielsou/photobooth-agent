@@ -457,6 +457,11 @@ function Get-AgentStatus {
             if ($Device) { $DeviceName = $Device.name; $DevicePort = $Device.port; $DeviceProblem = $Device.problemCode }
             if ($Queue) { $QueueName = $Queue.name }
 
+            $UsbNode = $null
+            if (-not $Device -and $Driver.usbId) {
+                try { $UsbNode = Get-PrinterUsbNode -UsbId $Driver.usbId } catch { }
+            }
+
             $PrinterSetup += [PSCustomObject]@{
                 driver      = $Driver.printerDriverName
                 hardwareId  = $Driver.hardwareId
@@ -465,6 +470,7 @@ function Get-AgentStatus {
                 problemCode = $DeviceProblem
                 queue       = $QueueName
                 others      = @($Others | ForEach-Object { [PSCustomObject]@{ name = $_.name; hardwareIds = $_.hardwareIds } })
+                usb         = $UsbNode
             }
         }
     }
@@ -1316,8 +1322,36 @@ function Get-PrinterDevices {
     return $Devices
 }
 
-# Last queue repair attempt, reported in the heartbeat.
+# The printer's USB device (USB\<usbId>\<serial>) and every USBPRINT node
+# Windows ever created, present or not: when the USB device is there but has
+# no USBPRINT child, the printer was never enumerated (no port, no queue).
+function Get-PrinterUsbNode {
+    param([string]$UsbId)
+
+    $Usb = @(Get-PnpDevice -PresentOnly -InstanceId "USB\$UsbId\*" -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if (-not $Usb) { return $null }
+
+    $Children = @()
+    try { $Children = @((Get-PnpDeviceProperty -InstanceId $Usb.InstanceId -KeyName DEVPKEY_Device_Children -ErrorAction Stop).Data | Where-Object { $_ }) } catch { }
+
+    $Known = @(Get-PnpDevice -InstanceId "USBPRINT\*" -ErrorAction SilentlyContinue | ForEach-Object {
+        [PSCustomObject]@{ instanceId = $_.InstanceId; present = [bool]$_.Present; hardwareIds = @($_.HardwareID | Where-Object { $_ }) }
+    })
+
+    return [PSCustomObject]@{
+        instanceId  = $Usb.InstanceId
+        status      = "$($Usb.Status)"
+        problemCode = [int]$Usb.ConfigManagerErrorCode
+        service     = "$($Usb.Service)"
+        children    = $Children
+        usbPrint    = $Known
+    }
+}
+
+# Last queue repair attempt, reported in the heartbeat; USB devices already
+# restarted by this agent run (once each: it is a soft unplug/replug).
 $PrinterRepair = $null
+$UsbRestarted = @{}
 
 # A printer plugged in before its driver was installed has no queue: Windows
 # already gave up on it and does not retry by itself. When a plugged-in printer
@@ -1333,6 +1367,50 @@ function Repair-PrinterQueues {
         if (@(Get-Printer -ErrorAction Stop | Where-Object { $_.DriverName -eq $DriverName }).Count -gt 0) { continue }
 
         $Device = @($Devices | Where-Object { @($_.hardwareIds) -contains $Driver.hardwareId }) | Select-Object -First 1
+
+        # Printer seen on USB but never enumerated as a printer (no USBPRINT
+        # child, so no port): restart its USB device once, as unplugging and
+        # plugging it back would, now that the driver is there.
+        if (-not $Device -and $Driver.usbId -and -not $script:UsbRestarted.ContainsKey($Driver.usbId)) {
+
+            $Usb = Get-PrinterUsbNode -UsbId $Driver.usbId
+            if (-not $Usb) { continue }
+
+            $script:UsbRestarted[$Driver.usbId] = $true
+            $Attempt = [ordered]@{
+                driver = $DriverName
+                device = $Usb.instanceId
+                at     = (Get-Date).ToUniversalTime().ToString("o")
+                action = "restart"
+                ok     = $false
+                error  = $null
+            }
+
+            try {
+                Write-Log "Printer $DriverName on USB without a USBPRINT node: restarting $($Usb.instanceId)"
+                $Output = & pnputil.exe /restart-device "$($Usb.instanceId)" 2>&1
+                if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { throw "pnputil /restart-device failed ($LASTEXITCODE): $(($Output | Select-Object -Last 2) -join ' ')" }
+                Start-Sleep -Seconds 15
+
+                $Device = @(Get-PrinterDevices | Where-Object { @($_.hardwareIds) -contains $Driver.hardwareId }) | Select-Object -First 1
+                if (-not $Device) { throw "no matching USBPRINT node after the restart" }
+                $Attempt.ok = $true
+            }
+            catch {
+                $Attempt.error = $_.Exception.Message
+                Write-Log "Printer USB restart ($DriverName): $($_.Exception.Message)"
+            }
+
+            $script:PrinterRepair = [PSCustomObject]$Attempt
+            if (-not $Device) { continue }
+
+            # The restart may already have given the printer its queue.
+            if (@(Get-Printer -ErrorAction Stop | Where-Object { $_.DriverName -eq $DriverName }).Count -gt 0) {
+                Write-Log "Printer $DriverName got its queue after the USB restart"
+                continue
+            }
+        }
+
         if (-not $Device) { continue }
 
         $Attempt = [ordered]@{

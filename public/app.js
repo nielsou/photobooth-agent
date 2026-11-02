@@ -425,19 +425,36 @@ function fontsCheck(fonts) {
 
 // The booth type's printer plugged in but without a print queue (agent
 // repairs it), or a plugged-in printer its driver does not know (agent >=
-// 1.39.0). Nothing when the printer has its queue or is not plugged in.
+// 1.39.0), or seen on USB but never enumerated as a printer by Windows (agent
+// >= 1.40.0: restarted once). Nothing when it has its queue or is unplugged.
+const REPAIR_ACTIONS = { queue: "file créée", scan: "re-scan Windows", restart: "redémarrage USB" };
+
+function repairText(repair, driver) {
+  if (!repair || repair.driver !== driver) return "Réparation automatique en attente (au plus toutes les 15 min)";
+  const action = REPAIR_ACTIONS[repair.action] || repair.action || "réparation";
+  return repair.ok
+    ? `${action} le ${formatDate(repair.at)} : OK`
+    : `${action} le ${formatDate(repair.at)} en échec : ${repair.error}`;
+}
+
 function printerSetupChecks(setup, repair) {
   return asList(setup).map((p) => {
     if (p.device && p.queue) return null;
 
     if (p.device) {
-      const attempt = repair && repair.driver === p.driver
-        ? repair.ok
-          ? `Réparé le ${formatDate(repair.at)} (${repair.action === "queue" ? "file créée" : "re-scan Windows"})`
-          : `Réparation du ${formatDate(repair.at)} en échec : ${repair.error}`
-        : "Réparation automatique en attente (au plus toutes les 15 min)";
       const where = `${p.device} sur ${p.port || "port inconnu"}${p.problemCode ? ` (code Windows ${p.problemCode})` : ""}`;
-      return check(false, `${p.driver} branchée sans file d'impression`, `${where}\n${attempt}`);
+      return check(false, `${p.driver} branchée sans file d'impression`, `${where}\n${repairText(repair, p.driver)}`);
+    }
+
+    if (p.usb) {
+      const title = [
+        `USB : ${p.usb.instanceId} (${p.usb.status}${p.usb.problemCode ? `, code Windows ${p.usb.problemCode}` : ""}${p.usb.service ? `, ${p.usb.service}` : ""})`,
+        `Enfants : ${asList(p.usb.children).join(", ") || "aucun"}`,
+        ...asList(p.usb.usbPrint).map((n) => `${n.present ? "présent" : "absent"} ${n.instanceId} : ${asList(n.hardwareIds).join(", ")}`),
+        repairText(repair, p.driver),
+        "À défaut : débrancher puis rebrancher le câble USB de l'imprimante",
+      ].join("\n");
+      return check(false, `${p.driver} vue en USB mais pas comme imprimante`, title);
     }
 
     const others = asList(p.others);
