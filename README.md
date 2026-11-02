@@ -171,6 +171,15 @@ unplugging it), then carries on with the repair above. Each such printer's USB n
 its children and every USBPRINT node Windows ever created are reported in
 `printerSetup[].usb` (agent >= 1.40.0).
 
+### Screens
+
+A booth has one screen. The agent reports the screens Windows has connected
+(`displays.monitors`: EDID maker, model, serial, and connection: HDMI, DisplayPort,
+Indirect for a virtual one) and the display adapters (`displays.adapters`), re-read
+every 5 min (agent >= 1.41.0). The dashboard shows a line only when something is off:
+the same screen seen twice (same model and serial: HDMI + USB-C cables, seen on PRO-31),
+several screens, or a virtual display driver left by remote-control software.
+
 ### Booth setup at power-on
 
 Booth config (type, popups), printer drivers and fonts are applied once per power-on

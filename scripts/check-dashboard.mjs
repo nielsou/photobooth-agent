@@ -71,6 +71,13 @@ const booths = {
         printerRepair: { driver: "DP-DS620", device: "USBPRINT\\X&USB001", at: now, action: null, ok: false, error: "USB port 'USB001' not found" },
         drivers: [{ name: "DP-DS620", installed: true }, { name: "Other", installed: false, error: "boom" }],
         lights: { path: "C:/dslrBooth/PROJET_LUMIERES/DSLR_Tiggers.bat", com: "COM6", expected: "COM7", smartFlash: true, ok: false, arduinoSeen: true },
+        displays: {
+          monitors: [
+            { maker: "IVM", model: "PL2492H", serial: "1234", connection: "HDMI", active: true, instance: "DISPLAY\\A" },
+            { maker: "IVM", model: "PL2492H", serial: "1234", connection: "DisplayPort", active: true, instance: "DISPLAY\\B" },
+          ],
+          adapters: [{ name: "Intel(R) UHD Graphics", status: "OK" }, { name: "Parsec Virtual Display Adapter", status: "OK" }],
+        },
         kiosk: { appliedAt: now, done: ["power", "oobe", "users"], errors: ["shortcuts: boom"], shortcutsFixed: 1, autoLogon: "booth" },
         installs: [{ name: "Notepad++", installed: true, error: null }, { name: "X", installed: false, error: "boom" }],
         cleanup: { at: now, removed: ["Microsoft.BingNews"], errors: ["OneDrive: boom"] },

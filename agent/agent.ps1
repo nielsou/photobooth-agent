@@ -546,6 +546,7 @@ function Get-AgentStatus {
         camera            = $(try { Get-CameraStatus } catch { $null })
         autoLogon         = $(try { Get-AutoLogonStatus } catch { $null })
         hardware          = $(try { Get-HardwareInfo } catch { $null })
+        displays          = $(try { Get-DisplayInfo } catch { $null })
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
         spooler           = $SpoolerStatus
         printers          = $PrinterList
@@ -1943,6 +1944,51 @@ function Read-RenameFile {
 # Lenovo expose their BIOS settings to Windows (WMI); on other makes the
 # setting cannot be read and is reported as null. Read once per agent start.
 $HardwareInfo = $null
+
+# Screens Windows has connected (EDID: maker, model, serial) and how (HDMI,
+# DisplayPort/USB-C, virtual...), plus the display adapters: tells a second
+# real screen from the same screen seen twice (HDMI + USB-C cables) or from a
+# virtual display driver installed by remote-control software. Re-read every
+# 5 minutes (a screen can be plugged in or out at any time).
+$DisplayInfo = $null
+$NextDisplayCheck = Get-Date
+
+function Get-DisplayInfo {
+    if ($script:DisplayInfo -and (Get-Date) -lt $script:NextDisplayCheck) { return $script:DisplayInfo }
+    $script:NextDisplayCheck = (Get-Date).AddMinutes(5)
+
+    # WmiMonitorConnectionParams.VideoOutputTechnology (string keys: a uint32
+    # read as Int64 would not match Int32 keys)
+    $Technologies = @{ "0" = "VGA"; "4" = "DVI"; "5" = "HDMI"; "6" = "LVDS"; "10" = "DisplayPort"; "11" = "DisplayPort (embedded)"; "15" = "Miracast"; "16" = "Indirect (virtual)"; "2147483648" = "Internal" }
+
+    $Connections = @{}
+    foreach ($C in @(Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorConnectionParams -ErrorAction SilentlyContinue)) {
+        $Connections["$($C.InstanceName)"] = "$([int64]$C.VideoOutputTechnology)"
+    }
+
+    $Monitors = @()
+    foreach ($M in @(Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorID -ErrorAction SilentlyContinue)) {
+        $Code = $Connections["$($M.InstanceName)"]
+        $Connection = $Code
+        if ($Code -and $Technologies.ContainsKey($Code)) { $Connection = $Technologies[$Code] }
+
+        $Monitors += [PSCustomObject]@{
+            maker      = (-join [char[]]@($M.ManufacturerName | Where-Object { $_ -ne 0 })).Trim()
+            model      = (-join [char[]]@($M.UserFriendlyName | Where-Object { $_ -ne 0 })).Trim()
+            serial     = (-join [char[]]@($M.SerialNumberID | Where-Object { $_ -ne 0 })).Trim()
+            connection = $Connection
+            active     = [bool]$M.Active
+            instance   = "$($M.InstanceName)"
+        }
+    }
+
+    $Adapters = @(Get-PnpDevice -Class Display -PresentOnly -ErrorAction SilentlyContinue | ForEach-Object {
+        [PSCustomObject]@{ name = "$($_.FriendlyName)"; status = "$($_.Status)" }
+    })
+
+    $script:DisplayInfo = [PSCustomObject]@{ monitors = $Monitors; adapters = $Adapters }
+    return $script:DisplayInfo
+}
 
 function Get-HardwareInfo {
     if ($script:HardwareInfo) { return $script:HardwareInfo }

@@ -554,6 +554,29 @@ function autoLogonCheck(autoLogon) {
   return check(true, `Session auto (${autoLogon.user || "?"})`);
 }
 
+// Screens Windows sees (agent >= 1.41.0). A booth has one: two identical ones
+// are the same screen on two cables (HDMI + USB-C), a virtual one comes from
+// remote-control software (Parsec, spacedesk...). Nothing with one real screen.
+const VIRTUAL_DISPLAY = /virtual|parsec|spacedesk|indirect/i;
+
+function displaysCheck(displays) {
+  if (!displays) return null;
+  const monitors = asList(displays.monitors).filter((m) => m.active !== false);
+  const adapters = asList(displays.adapters);
+  const virtual = [...adapters.map((a) => a.name), ...monitors.map((m) => m.connection)].some((n) => VIRTUAL_DISPLAY.test(n || ""));
+  if (monitors.length <= 1 && !virtual) return null;
+
+  const sameScreen = monitors.length > 1 && new Set(monitors.map((m) => `${m.maker}|${m.model}|${m.serial}`)).size === 1;
+  const text = sameScreen ? `Écran vu ${monitors.length} fois` : virtual ? "Écran virtuel détecté" : `${monitors.length} écrans détectés`;
+  const title = [
+    ...monitors.map((m) => `${m.maker} ${m.model} (n° ${m.serial || "?"}) : ${m.connection || "connexion ?"}`),
+    ...adapters.map((a) => `Carte graphique : ${a.name}`),
+    sameScreen ? "Même écran branché par deux câbles vidéo (HDMI + USB-C ?) : Win+P → « Écran PC uniquement » ou débrancher la vidéo en trop" : null,
+    virtual ? "Pilote d'écran virtuel (logiciel de prise en main à distance) : à désinstaller" : null,
+  ].filter(Boolean).join("\n");
+  return check(false, text, title);
+}
+
 function programsCell(s) {
   const items = [
     ...softwareChecks(s.software),
@@ -561,6 +584,7 @@ function programsCell(s) {
     fontsCheck(s.fonts),
     ...driverChecks(s.drivers),
     ...printerSetupChecks(s.printerSetup, s.printerRepair),
+    displaysCheck(s.displays),
     videoCheck(s.startScreenVideo),
     kioskCheck(s.kiosk),
     cleanupCheck(s.cleanup),
