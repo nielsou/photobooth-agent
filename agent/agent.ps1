@@ -613,6 +613,80 @@ function Test-NewBoot {
 }
 
 # --------------------------------------------------
+# SIGN-IN AT POWER-ON
+# --------------------------------------------------
+
+# Did Windows open the booth user's session by itself at power-on? A desktop
+# (explorer.exe) within 3 minutes means nobody typed a password (automatic
+# sign-in, or a user without a password); none after 10 minutes means Windows
+# waits at its sign-in screen, and the booth would stay there after a power
+# cut. Watched from each power-on (boot, or resume after > 10 min off), kept
+# in a file across agent restarts. The boot time alone can only confirm it:
+# after a Fast Startup resume it is old.
+$LogonCheckFile = "$AgentDir\logon-check.json"
+$UnattendedLogonDelay = 180
+$LogonWatchSince = $null
+$UnattendedLogon = $null
+if (Test-Path $LogonCheckFile) {
+    try { $UnattendedLogon = Get-Content $LogonCheckFile -Raw | ConvertFrom-Json } catch { }
+}
+
+function Get-FirstDesktopTime {
+    $First = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.StartTime } | Sort-Object StartTime) | Select-Object -First 1
+    if ($First) { return $First.StartTime }
+    return $null
+}
+
+function Save-UnattendedLogon {
+    param([bool]$Unattended, $DelaySeconds, [string]$Source)
+
+    $script:UnattendedLogon = [PSCustomObject]@{
+        unattended   = $Unattended
+        delaySeconds = $DelaySeconds
+        source       = $Source
+        checkedAt    = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    try { $script:UnattendedLogon | ConvertTo-Json | Set-Content -Path $LogonCheckFile -Encoding UTF8 } catch { }
+
+    $Text = "no desktop after 10 min: Windows waits for a password"
+    if ($Unattended) { $Text = "desktop $DelaySeconds s after power-on, no password typed" }
+    Write-Log "Sign-in at power-on ($Source): $Text"
+}
+
+# Confirms an unattended sign-in from the boot time, never denies it.
+function Test-BootDesktop {
+    $Boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+    $Desktop = Get-FirstDesktopTime
+    if (-not $Desktop) { return }
+
+    $Delay = [int]($Desktop - $Boot).TotalSeconds
+    if ($Delay -ge 0 -and $Delay -le $script:UnattendedLogonDelay) {
+        Save-UnattendedLogon -Unattended $true -DelaySeconds $Delay -Source "boot"
+    }
+}
+
+function Update-UnattendedLogon {
+    if (-not $script:LogonWatchSince) { return }
+
+    $Desktop = Get-FirstDesktopTime
+
+    if ($Desktop -and $Desktop -ge $script:LogonWatchSince) {
+        $Delay = [int]($Desktop - $script:LogonWatchSince).TotalSeconds
+        $script:LogonWatchSince = $null
+        Save-UnattendedLogon -Unattended ($Delay -le $script:UnattendedLogonDelay) -DelaySeconds $Delay -Source "power-on"
+    }
+    elseif ($Desktop) {
+        # Desktop already there when the watch began (agent started late).
+        $script:LogonWatchSince = $null
+        Test-BootDesktop
+    }
+    elseif (((Get-Date) - $script:LogonWatchSince).TotalMinutes -gt 10) {
+        $script:LogonWatchSince = $null
+        Save-UnattendedLogon -Unattended $false -DelaySeconds $null -Source "power-on"
+    }
+}
+
+# --------------------------------------------------
 # REMOTE HEARTBEAT
 # --------------------------------------------------
 
@@ -1919,6 +1993,8 @@ function Get-AutoLogonStatus {
         # Password in the registry (else maybe an LSA secret, not readable)
         registryPwd = [bool]($Winlogon.PSObject.Properties.Name -contains "DefaultPassword")
         domainOk    = -not $Winlogon.DefaultDomainName -or "$($Winlogon.DefaultDomainName)" -eq $Target
+        # What actually happened at the last power-on (see Update-UnattendedLogon)
+        unattended  = $script:UnattendedLogon
     }
 }
 
@@ -2514,6 +2590,33 @@ function Set-KioskSettings {
     }
     catch { $Errors += "oobe: $($_.Exception.Message)" }
 
+    # Display scaling 100 % for every user, from their next sign-in: LumaBooth
+    # and dslrBooth screens are designed for 1920x1080 at 100 % (PRO-31 came at
+    # 125 %, so LumaBooth worked in 1536x864). Only when every screen's native
+    # mode (EDID) is at most 1920 px wide: on a 4K screen 100 % is far too small.
+    try {
+        $Widths = @(Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorListedSupportedSourceModes -ErrorAction Stop | ForEach-Object {
+            [int]$_.MonitorSourceModes[$_.PreferredMonitorSourceModeIndex].HorizontalActivePixels
+        })
+        $Widest = ($Widths | Measure-Object -Maximum).Maximum
+
+        if (-not $Widest) {
+            $Errors += "scaling: screen resolution unknown"
+        }
+        elseif ($Widest -le 1920) {
+            Invoke-OnUserHives -Action {
+                param($Hive)
+                Set-RegistryValue -Path "$Hive\Control Panel\Desktop" -Name "LogPixels" -Value 96
+                Set-RegistryValue -Path "$Hive\Control Panel\Desktop" -Name "Win8DpiScaling" -Value 1
+            }
+            $Done += "scaling"
+        }
+        else {
+            Write-Log "Display scaling left as is: $Widest px wide screen"
+        }
+    }
+    catch { $Errors += "scaling: $($_.Exception.Message)" }
+
     # Per user: screensaver off (also as a policy, so it stays off),
     # notifications and Windows tips/suggestions off.
     try {
@@ -2733,11 +2836,18 @@ Write-Log "Heartbeat interval: $HeartbeatInterval seconds"
 
 try {
     if (Test-NewBoot) {
+        $LogonWatchSince = Get-Date
         Clear-OldPrintJobs -Reason "Windows startup"
     }
 }
 catch {
     Write-Log "Startup purge error: $($_.Exception.Message)"
+}
+
+# Agent installed or updated after power-on, nothing known yet: the current
+# boot can still confirm an unattended sign-in.
+if (-not $LogonWatchSince -and -not $UnattendedLogon) {
+    try { Test-BootDesktop } catch { Write-Log "Sign-in check error: $($_.Exception.Message)" }
 }
 
 Restore-SetupStatus
@@ -2780,6 +2890,7 @@ while ($true) {
     if ($Gap -gt 10) {
         $SetupDone = @{ config = $false; drivers = $false; fonts = $false; video = $false; lights = $false; kiosk = $false; installs = $false; inventory = $false }
         $NextSetupTry = Get-Date
+        $LogonWatchSince = Get-Date
 
         try {
             Clear-OldPrintJobs -Reason "resumed after $([int]$Gap) min off/asleep"
@@ -2911,6 +3022,9 @@ while ($true) {
             $NextUntypedCheck = (Get-Date).AddSeconds($BoothConfigInterval)
         }
     }
+
+    try { Update-UnattendedLogon }
+    catch { Write-Log "Sign-in check error: $($_.Exception.Message)" }
 
     # Fonts that failed (Drive unreachable, file in use...): retried every hour
     # instead of only at the next power-on.

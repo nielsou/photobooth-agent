@@ -492,7 +492,7 @@ function videoCheck(video) {
 
 // Kiosk settings applied at power-on on booths (agent >= 1.22.0): no sleep,
 // lock, screensaver, notifications; startup shortcut maximized.
-const KIOSK_PARTS = { power: "veille et écran", updates: "redémarrages Windows Update", oobe: "écrans de configuration après mise à jour", users: "écran de veille et notifications", shortcuts: "raccourci de démarrage" };
+const KIOSK_PARTS = { power: "veille et écran", updates: "redémarrages Windows Update", oobe: "écrans de configuration après mise à jour", scaling: "échelle d'affichage 100 % (à la prochaine ouverture de session)", users: "écran de veille et notifications", shortcuts: "raccourci de démarrage" };
 
 function kioskCheck(kiosk) {
   if (!kiosk) return null;
@@ -546,10 +546,24 @@ function biosCheck(hardware) {
 
 // Automatic sign-in at power-on (agent >= 1.38.0): without it, or when it
 // still names the computer's old name (after a rename), Windows asks for the
-// password. The agent repairs the old name at its next start.
+// password. The agent repairs the old name at its next start. Since agent
+// 1.42.0 it also says what happened at the last power-on (`unattended`): a
+// user without a password needs no automatic sign-in at all.
 function autoLogonCheck(autoLogon) {
   if (!autoLogon) return null;
-  if (!autoLogon.enabled) return check(null, "Session auto : désactivée", "Windows demande le mot de passe au démarrage");
+  const seen = autoLogon.unattended;
+  const when = seen
+    ? `${seen.source === "boot" ? "Constaté" : "Vu"} le ${formatDate(seen.checkedAt)}${seen.delaySeconds != null ? ` : bureau ${seen.delaySeconds} s après la mise sous tension` : ""}`
+    : "";
+  if (seen && seen.unattended === false) {
+    return check(false, "Session auto : mot de passe demandé au démarrage",
+      `Après une coupure de courant, la borne resterait sur l'écran de connexion : configurer l'ouverture de session automatique (Autologon)\n${when}`);
+  }
+  if (!autoLogon.enabled) {
+    return seen && seen.unattended
+      ? check(true, "Session auto (sans mot de passe)", `Windows ouvre la session seul\n${when}`)
+      : check(null, "Session auto : désactivée", "Pas encore vérifié : l'agent le voit au prochain démarrage de la borne");
+  }
   if (!autoLogon.domainOk) return check(false, `Session auto : ancien nom (${autoLogon.domain})`, "Corrigé par l'agent : sans mot de passe au démarrage suivant");
   return check(true, `Session auto (${autoLogon.user || "?"})`);
 }

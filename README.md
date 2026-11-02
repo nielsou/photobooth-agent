@@ -244,11 +244,27 @@ screensaver off for every user, also as a user policy (hives of users who are no
 logged on are loaded); turns notifications and Windows tips/suggestions off; does not
 restart for Windows Update while someone is logged on; does not replay the "finish
 setting up your PC" / privacy screens after a feature update (`DisablePrivacyExperience`
-policy; the per-user SCOOBE switch does not cover them); sets the dslrBooth/LumaBooth
-shortcuts of the Startup folders to "Maximized". The result is reported in `kiosk`
-(with the automatic sign-in user, read only) and shown in the "Logiciel" column.
-User passwords and automatic sign-in are not changed: that would need a password in
-this public repository.
+policy; the per-user SCOOBE switch does not cover them); sets display scaling to 100 %
+for every user from their next sign-in (`LogPixels` 96 + `Win8DpiScaling`), only when
+every screen's native mode (EDID) is at most 1920 px wide, since LumaBooth/dslrBooth
+screens are designed for 1920x1080 at 100 % and a 4K screen at 100 % is unreadable;
+sets the dslrBooth/LumaBooth shortcuts of the Startup folders to "Maximized". The
+result is reported in `kiosk` (with the automatic sign-in user, read only) and shown
+in the "Logiciel" column. User passwords and automatic sign-in are not changed: that
+would need a password in this public repository.
+
+What matters is that Windows opens the session by itself after a power cut, which a
+user without a password does as well as automatic sign-in. So the agent watches each
+power-on (boot, or resume after > 10 min off): a desktop (explorer.exe) within 3 min
+means no password was typed, none after 10 min means Windows waits at its sign-in
+screen (`autoLogon.unattended`, kept in `logon-check.json`, agent >= 1.42.0). An agent
+installed or updated after power-on can only confirm it from the boot time, never
+deny it (after a Fast Startup resume the boot time is old). The dashboard shows
+"Session auto (sans mot de passe)" in green, or a red "mot de passe demandé".
+
+LumaBooth starting windowed comes from the event config, not from Windows: the
+event generator's `default-config.json` (`captureSettings.isStartInFullscreenEnabled`,
+copied as `false` from the old dslrBooth `.lcfg`) is `true` since 2026-11-02.
 
 The Citizen CZ-01 driver (Cinebooth 150) is listed with `kind: "check"`: the agent
 only reports whether it is installed, the dashboard shows "à installer à la main".
