@@ -148,8 +148,11 @@ needs (Signature and Cinebooth Illimité: DNP DP-DS620). A booth missing one dow
 Google Drive, and installs it with `pnputil` only if the zip's SHA-256 is the expected
 one and its catalog is validly signed by the vendor; the dashboard shows the result.
 To ship a new driver version, upload the zip and update its Drive id and SHA-256.
-The Citizen CZ-01 driver (Cinebooth 150) is an unsigned InstallShield setup and is
-not installed automatically.
+The Citizen CZ-01 driver (Cinebooth 150) is installed the same way. Citizen ships
+an unsigned InstallShield setup, but the driver package inside it is signed by
+CITIZEN SYSTEMS JAPAN: `public/drivers/citizen-cz01-1.0.1.1.zip` is that package
+(extracted from `setup_x64.exe` -> MSI -> `Data1.cab`, with the MSI's x64 folder
+layout), served by the dashboard itself.
 
 A printer plugged in **before** its driver was installed gets no print queue: Windows
 already gave up on the device and does not retry by itself. Each printer driver
@@ -199,8 +202,9 @@ Audio - American Female\photoboothparisvideo.mp4`), dslrBooth otherwise (each us
 `AppData\Roaming\dslrBooth\Assets\VirtualAttendant\photoboothparis-ONETOUCH 3.0.mp4`,
 asset id `photoboothparis` used by event_generator). It is cached under
 `C:\ProgramData\PhotoboothAgent\media`, so a software update wiping it is fixed at the
-next power-on without downloading again. To change the video: upload it to Drive and
-update its id, SHA-256 and size.
+next power-on without downloading again. A copy refused because the file is in use
+(the booth software already playing it) is retried every 15 minutes. To change the
+video: upload it to Drive and update its id, SHA-256 and size.
 
 ### Lights (Arduino / Smart Flash)
 
@@ -266,8 +270,8 @@ LumaBooth starting windowed comes from the event config, not from Windows: the
 event generator's `default-config.json` (`captureSettings.isStartInFullscreenEnabled`,
 copied as `false` from the old dslrBooth `.lcfg`) is `true` since 2026-11-02.
 
-The Citizen CZ-01 driver (Cinebooth 150) is listed with `kind: "check"`: the agent
-only reports whether it is installed, the dashboard shows "à installer à la main".
+A driver listed with `kind: "check"` is only reported (installed or not), the
+dashboard then shows "à installer à la main". None is listed that way any more.
 
 ### Inventory
 

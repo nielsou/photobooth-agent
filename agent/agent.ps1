@@ -1282,8 +1282,8 @@ function Install-PrinterDrivers {
                 continue
             }
 
-            # Driver the agent cannot install (e.g. Citizen CZ-01, unsigned
-            # InstallShield setup): only reported, to be installed by hand.
+            # Driver the agent cannot install: only reported, to be installed
+            # by hand (no such driver in booth-config any more).
             if ($Driver.kind -eq "check") {
                 $Result.manual = $true
                 $Results += [PSCustomObject]$Result
@@ -2872,6 +2872,7 @@ $NextConfigCheck = (Get-Date).AddMinutes(1)
 $NextSetupTry = Get-Date
 $NextUntypedCheck = Get-Date
 $NextFontsRetry = (Get-Date).AddHours(1)
+$NextVideoRetry = (Get-Date).AddMinutes(15)
 $NextPrinterRepair = Get-Date
 
 # With Fast Startup, "Shut down" hibernates the system and this process just
@@ -3032,6 +3033,15 @@ while ($true) {
         $NextFontsRetry = (Get-Date).AddHours(1)
         try { Install-Fonts; Save-SetupStatus }
         catch { Write-Log "Fonts retry error: $($_.Exception.Message)" }
+    }
+
+    # Welcome video the booth software had open when it was copied (file in
+    # use, e.g. LumaBooth already started): retried every 15 minutes instead
+    # of only at the next power-on.
+    if ($SetupDone.video -and $StartScreenStatus -and @($StartScreenStatus.targets | Where-Object { -not $_.ok }).Count -gt 0 -and (Get-Date) -ge $NextVideoRetry) {
+        $NextVideoRetry = (Get-Date).AddMinutes(15)
+        try { Install-StartScreenVideo; Save-SetupStatus }
+        catch { Write-Log "Welcome video retry error: $($_.Exception.Message)" }
     }
 
     # Printer plugged in before its driver was installed: queue repaired (see
