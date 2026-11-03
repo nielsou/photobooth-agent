@@ -80,6 +80,15 @@ the printer is fine again. The agent (SYSTEM) creates the task and downloads
 Texts, link and snooze live in `api/booth-config.js`
 per booth type (only Signature for now); the agent fetches them hourly (ETag/304).
 
+Low paper (agent >= 1.44.0, alert `paperLow` with `whenLow: 9`): from 9 prints
+left down to 1, with no printer error, no popup opens; the bottom-right badge
+shows the count instead of the "!" and is updated as prints go out (the agent
+rewrites `alert.json` with the same `since`, so the popup only refreshes).
+Tapping it opens "Plus que N photos à imprimer" ("Contactez votre référent pour
+procéder au changement du papier", or on Cinebooth 150, whose paper is not
+reloaded, "vous pourrez toujours faire des photos numériques"). At 0 the usual
+paper popup opens in full; any printer error takes precedence.
+
 The install folder is writable only by SYSTEM and Administrators (the agent runs as
 SYSTEM, so a user-writable script would be a privilege escalation).
 

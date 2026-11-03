@@ -112,6 +112,7 @@ const printerAlerts = {
   codesSeen: [{ code: 4242, firstSeen: now, firstBooth: "X", lastSeen: now, lastBooth: "Y", count: 2 }],
   types: [
     { type: "Signature", note: "DNP", alerts: [
+      { id: "paperLow", whenLow: 9, minimized: true, title: "Plus que {n} photos à imprimer", message: "m", detail: null, url: null, qrDataUrl: null },
       { id: "paper", codes: [1100], whenEmpty: true, title: "Plus de papier", message: "m", detail: "d", url: "https://x", qrDataUrl: "data:," },
       { id: "error", otherErrors: true, title: "Problème", message: "m", detail: "d", url: null, qrDataUrl: null },
     ] },

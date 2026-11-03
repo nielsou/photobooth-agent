@@ -864,6 +864,7 @@ function triggerLabels(alert) {
   const labels = asList(alert.codes).map((code) => {
     return `${dnpLabel(code)} (${code})`;
   });
+  if (alert.whenLow) labels.push(`${alert.whenLow} tirages restants ou moins, sans erreur : pastille avec le nombre, sans popup (un appui l'ouvre)`);
   if (alert.whenEmpty) labels.push("0 tirage restant");
   if (alert.otherErrors) labels.push("Toute autre erreur (code ≥ 1000)");
   return labels;
@@ -873,7 +874,7 @@ function alertRow(alert) {
   return el("tr", {},
     el("td", {}, el("ul", { class: "triggers" }, ...triggerLabels(alert).map((label) => el("li", {}, label)))),
     el("td", {},
-      el("div", { class: "popup-title" }, alert.title),
+      el("div", { class: "popup-title" }, String(alert.title || "").replace("{n}", alert.whenLow ?? "N")),
       el("div", {}, alert.message),
       el("div", { class: "hint" }, alert.detail),
       asList(alert.slides).length ? el("div", { class: "slides" },

@@ -4,7 +4,9 @@
 # and cannot show windows). Watches alert.json written by the agent and shows
 # a fullscreen, always-on-top popup over dslrBooth while the printer has a
 # problem. "OK" minimizes it to a floating "!" badge (tap to reopen); both go
-# away by themselves once the agent removes alert.json. Started at logon by the "Photobooth Agent Popup" task.
+# away by themselves once the agent removes alert.json. Countdown alerts (few
+# prints left) start as the badge, showing the count instead of the "!".
+# Started at logon by the "Photobooth Agent Popup" task.
 
 param(
     [string]$AgentDir = "C:\ProgramData\PhotoboothAgent"
@@ -100,7 +102,7 @@ $Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader
           <Ellipse Fill="#1B1F24"/>
           <Ellipse Fill="White" Margin="7"/>
           <Ellipse Fill="{TemplateBinding Background}" Margin="12"/>
-          <TextBlock Text="!" Foreground="#1B1F24" FontFamily="Segoe UI" FontSize="62" FontWeight="Black"
+          <TextBlock x:Name="BadgeMark" Text="!" Foreground="#1B1F24" FontFamily="Segoe UI" FontSize="62" FontWeight="Black"
                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-8,0,0"/>
         </Grid>
       </ControlTemplate>
@@ -113,6 +115,9 @@ $Badge = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader 
 
 $State = @{
     ShownKey = $null
+    # alert.json as last displayed: the agent rewrites it when the count of a
+    # countdown alert changes (same "since"): content updated, not reopened.
+    ShownRaw = $null
     Minimized = $false
     Slides = @()
     SlideIndex = -1
@@ -164,9 +169,16 @@ $Window.FindName("ClipPlayer").Add_MediaFailed({
 })
 
 function Show-Alert {
-    param($Alert)
+    param($Alert, [switch]$Update)
 
     $Window.FindName("BadgeText").Text = $Alert.badge
+
+    # Countdown alert (few prints left): the count instead of the "!".
+    # The ControlTemplate's named parts are only reachable from the template.
+    $Reopen = $Badge.FindName("ReopenButton")
+    $Reopen.ApplyTemplate() | Out-Null
+    $Mark = $Reopen.Template.FindName("BadgeMark", $Reopen)
+    if ($Mark) { $Mark.Text = if ($null -ne $Alert.count) { "$($Alert.count)" } else { "!" } }
 
     # "critical" (booth cannot take photos, e.g. camera off): red, not the
     # orange of the printer warnings, also for the minimized badge.
@@ -235,6 +247,19 @@ function Show-Alert {
     }
 
     $State.ShownKey = "$($Alert.id)|$($Alert.since)"
+
+    # Same problem, new content (count): keep what is on screen as it is.
+    if ($Update) {
+        if ($State.Minimized) { $Player.Pause() }
+        return
+    }
+
+    # Countdown alert: badge only, the popup opens when it is tapped.
+    if ($Alert.minimized) {
+        Minimize-Alert
+        return
+    }
+
     $State.Minimized = $false
 
     $Badge.Hide()
@@ -244,6 +269,7 @@ function Show-Alert {
 
 function Hide-All {
     $State.ShownKey = $null
+    $State.ShownRaw = $null
     $State.Minimized = $false
     if ($Window.IsVisible) { $Window.Hide() }
     if ($Badge.IsVisible) { $Badge.Hide() }
@@ -351,8 +377,10 @@ $Timer.Add_Tick({
         }
 
         $Alert = $null
+        $Raw = $null
         if (Test-Path $AlertFile) {
-            $Alert = Get-Content -Path $AlertFile -Raw -ErrorAction Stop | ConvertFrom-Json
+            $Raw = Get-Content -Path $AlertFile -Raw -ErrorAction Stop
+            $Alert = $Raw | ConvertFrom-Json
         }
 
         # Printer is fine again: popup and badge go away.
@@ -361,10 +389,18 @@ $Timer.Add_Tick({
             return
         }
 
-        # A new problem (e.g. paper end -> jam): full popup, even if minimized.
+        # A new problem (e.g. paper end -> jam): full popup, even if minimized
+        # (countdown alerts: badge only).
         if ("$($Alert.id)|$($Alert.since)" -ne $State.ShownKey) {
             Show-Alert -Alert $Alert
+            $State.ShownRaw = $Raw
             return
+        }
+
+        # Same problem, updated content (prints left): refreshed in place.
+        if ($Raw -ne $State.ShownRaw) {
+            Show-Alert -Alert $Alert -Update
+            $State.ShownRaw = $Raw
         }
 
         # Stay in front of dslrBooth, which may grab the foreground.

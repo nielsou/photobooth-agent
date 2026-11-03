@@ -985,6 +985,18 @@ function Find-PrinterAlert {
         }
     }
 
+    # No problem, but few prints left: countdown badge (whenLow).
+    foreach ($Device in @($DnpDevices | Where-Object { $_ })) {
+
+        $Left = $Device.mediaRemaining
+        if ($null -eq $Left -or $Left -le 0) { continue }
+        if ($null -ne $Device.statusCode -and $Device.statusCode -ge 1000) { continue }
+
+        foreach ($Alert in $script:PrinterAlerts) {
+            if ($Alert.whenLow -and $Left -le $Alert.whenLow) { return @{ Alert = $Alert; Device = $Device } }
+        }
+    }
+
     return $null
 }
 
@@ -1049,12 +1061,24 @@ function Update-PrinterAlert {
         $Alert = $Match.Alert
         $Code = $Match.Device.statusCode
 
-        if (-not $Current -or $Current.id -ne $Alert.id -or "$($Current.errorCode)" -ne "$Code") {
-            $Data = [ordered]@{ since = (Get-Date).ToUniversalTime().ToString("o"); errorCode = $Code }
+        # Countdown alert: the prints left, shown on the badge.
+        $Count = if ($Alert.whenLow) { $Match.Device.mediaRemaining } else { $null }
+        # Its normal states (idle, printing, cooling...) do not make it a new one.
+        $SameProblem = $Current -and $Current.id -eq $Alert.id -and ($Alert.whenLow -or "$($Current.errorCode)" -eq "$Code")
+
+        if (-not $SameProblem -or "$($Current.count)" -ne "$Count") {
+            # Only the count changed: same "since", so the popup is not
+            # opened again, only updated.
+            $Since = if ($SameProblem) { $Current.since } else { (Get-Date).ToUniversalTime().ToString("o") }
+            $Data = [ordered]@{ since = $Since; errorCode = $Code }
             $Alert.PSObject.Properties | ForEach-Object { $Data[$_.Name] = $_.Value }
+            if ($null -ne $Count) {
+                $Data["count"] = $Count
+                $Data["title"] = if ($Count -eq 1 -and $Alert.titleOne) { $Alert.titleOne } else { "$($Alert.title)" -replace '\{n\}', "$Count" }
+            }
             $Data["info"] = if ($Match.Info) { $Match.Info } else { Get-AlertInfo -Status $Status -Device $Match.Device }
             [PSCustomObject]$Data | ConvertTo-Json -Depth 5 | Set-Content -Path $AlertFile -Encoding UTF8
-            Write-Log "Printer alert popup: $($Alert.id) (code $Code)"
+            Write-Log "Printer alert popup: $($Alert.id) (code $Code$(if ($null -ne $Count) { ", $Count left" }))"
 
             # Make sure someone is there to display it.
             try { Start-PopupHelper } catch { Write-Log "Popup helper start error: $($_.Exception.Message)" }
