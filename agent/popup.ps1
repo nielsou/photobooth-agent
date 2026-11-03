@@ -99,7 +99,7 @@ $Window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader
     <Button.Template>
       <ControlTemplate TargetType="Button">
         <Grid>
-          <Ellipse Fill="#1B1F24"/>
+          <Ellipse x:Name="BadgeRing" Fill="#1B1F24"/>
           <Ellipse Fill="White" Margin="7"/>
           <Ellipse Fill="{TemplateBinding Background}" Margin="12"/>
           <TextBlock x:Name="BadgeMark" Text="!" Foreground="#1B1F24" FontFamily="Segoe UI" FontSize="62" FontWeight="Black"
@@ -173,13 +173,6 @@ function Show-Alert {
 
     $Window.FindName("BadgeText").Text = $Alert.badge
 
-    # Countdown alert (few prints left): the count instead of the "!".
-    # The ControlTemplate's named parts are only reachable from the template.
-    $Reopen = $Badge.FindName("ReopenButton")
-    $Reopen.ApplyTemplate() | Out-Null
-    $Mark = $Reopen.Template.FindName("BadgeMark", $Reopen)
-    if ($Mark) { $Mark.Text = if ($null -ne $Alert.count) { "$($Alert.count)" } else { "!" } }
-
     # "critical" (booth cannot take photos, e.g. camera off): red, not the
     # orange of the printer warnings, also for the minimized badge.
     $Critical = $Alert.severity -eq "critical"
@@ -190,6 +183,22 @@ function Show-Alert {
     $Window.FindName("BadgeText").FontWeight = $(if ($Critical) { "Bold" } else { "Normal" })
     $Window.FindName("TitleText").Foreground = & $Brush $(if ($Critical) { "#B42318" } else { "#1B1F24" })
     $Badge.FindName("ReopenButton").Background = & $Brush $(if ($Critical) { "#E5484D" } else { "#F2A30F" })
+
+    # Countdown alert (few prints left): the count instead of the "!", in a
+    # calm sand badge, not bold (not a problem yet). The ControlTemplate's
+    # named parts are only reachable from the template.
+    $Reopen = $Badge.FindName("ReopenButton")
+    $Reopen.ApplyTemplate() | Out-Null
+    $Mark = $Reopen.Template.FindName("BadgeMark", $Reopen)
+    $Ring = $Reopen.Template.FindName("BadgeRing", $Reopen)
+    $Countdown = $null -ne $Alert.count
+    if ($Ring) { $Ring.Fill = & $Brush $(if ($Countdown) { "#B89A66" } else { "#1B1F24" }) }
+    if ($Countdown) { $Reopen.Background = & $Brush "#E9D8B4" }
+    if ($Mark) {
+        $Mark.Text = if ($Countdown) { "$($Alert.count)" } else { "!" }
+        $Mark.FontWeight = if ($Countdown) { "Normal" } else { "Black" }
+        $Mark.Foreground = & $Brush $(if ($Countdown) { "#6B5530" } else { "#1B1F24" })
+    }
     $Window.FindName("TitleText").Text = $Alert.title
     $Window.FindName("MessageText").Text = $Alert.message
     $Window.FindName("DetailText").Text = $Alert.detail
