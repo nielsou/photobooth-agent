@@ -546,6 +546,7 @@ function Get-AgentStatus {
         computerNameNext  = $(try { $Next = Get-PendingComputerName; if ($Next -and $Next -ne $env:COMPUTERNAME) { $Next } else { $null } } catch { $null })
         camera            = $(try { Get-CameraStatus } catch { $null })
         autoLogon         = $(try { Get-AutoLogonStatus } catch { $null })
+        accounts          = $(try { Get-LocalAccounts } catch { $null })
         hardware          = $(try { Get-HardwareInfo } catch { $null })
         displays          = $(try { Get-DisplayInfo } catch { $null })
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
@@ -2054,6 +2055,44 @@ function Clear-AutoLogonPassword {
     Remove-ItemProperty -Path $WinlogonKey -Name "AutoLogonCount" -ErrorAction SilentlyContinue
 
     return "done"
+}
+
+# The machine's accounts, to decide what to do when the booth account cannot be
+# left without a password (CINEBOOTH-26 signs in on a Microsoft account, and its
+# sign-in screen shows two users): a local account already there can take over
+# the automatic sign-in, with no conversion. Reported read only, nothing is
+# changed here. `booth` marks the profile that holds the booth software's
+# settings, which must not be lost.
+function Get-LocalAccounts {
+    $Profiles = @{}
+    foreach ($P in Get-CimInstance Win32_UserProfile -Filter "Special=False" -ErrorAction SilentlyContinue) {
+        $Profiles[$P.SID] = $P
+    }
+
+    # S-1-5-32-544 = Administrators, whatever the Windows language.
+    $Admins = @()
+    try { $Admins = @(Get-LocalGroupMember -SID "S-1-5-32-544" -ErrorAction Stop | ForEach-Object { "$($_.SID)" }) } catch { }
+
+    $Accounts = @()
+    foreach ($U in Get-CimInstance Win32_UserAccount -Filter "LocalAccount=True" -ErrorAction SilentlyContinue) {
+        if ($U.Disabled) { continue }
+        $Profile = $Profiles[$U.SID]
+        $Path = $(if ($Profile) { "$($Profile.LocalPath)" } else { $null })
+        $Source = $null
+        try { $Source = "$((Get-LocalUser -SID $U.SID -ErrorAction Stop).PrincipalSource)" } catch { }
+
+        $Accounts += [PSCustomObject]@{
+            name    = "$($U.Name)"
+            full    = $(if ($U.FullName) { "$($U.FullName)" } else { $null })
+            source  = $(if ($Source) { $Source } else { "Local" })
+            admin   = [bool]($Admins -contains "$($U.SID)")
+            profile = $Path
+            lastUse = $(if ($Profile -and $Profile.LastUseTime) { ([datetime]$Profile.LastUseTime).ToUniversalTime().ToString("o") } else { $null })
+            # Holds the booth software's settings: never lose this profile.
+            booth   = [bool]($Path -and (Test-Path (Join-Path $Path "AppData\Roaming\dslrBooth")))
+        }
+    }
+    return @($Accounts)
 }
 
 # Reported in the status: why a booth may ask for a password at power-on.

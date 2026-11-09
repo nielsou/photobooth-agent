@@ -286,6 +286,14 @@ and leaves `PrincipalSource` empty on others, so the account is confirmed throug
 `Win32_UserAccount` as well, and the password is blanked through ADSI where the
 `LocalAccounts` module is absent.
 
+When the booth account cannot be left without a password, the machine's accounts are
+reported in `accounts` (agent >= 1.47.0, read only, nothing changed): name, full name,
+`source` (Local or MicrosoftAccount), whether it is an administrator, its profile path,
+its last use, and `booth` for the profile that holds the booth software settings. It
+answers the question that blocks the decision: is there already a local account the
+automatic sign-in could use, instead of converting the Microsoft account? CINEBOOTH-26
+shows two users on its sign-in screen, both named Damien L.
+
 ### Chrome kept up to date (booths only)
 
 A booth is off most of the time, so Google's own scheduled update rarely gets its turn
