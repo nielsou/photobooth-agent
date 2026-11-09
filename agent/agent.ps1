@@ -2765,6 +2765,60 @@ function Set-RegistryValue {
     New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
 }
 
+# The booth software Windows must start by itself: LumaBooth when installed,
+# dslrBooth otherwise (same rule as the welcome video). Recent dslrBooth
+# installers also use a "LumaBooth" folder, so only a folder holding
+# LumaBooth.exe is LumaBooth.
+function Find-BoothExe {
+    $Roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
+    foreach ($Candidate in @(
+        @{ app = "LumaBooth"; rel = "LumaBooth\LumaBooth.exe" },
+        @{ app = "dslrBooth"; rel = "dslrBooth\dslrBooth.exe" },
+        @{ app = "dslrBooth"; rel = "LumaBooth\dslrBooth.exe" }
+    )) {
+        foreach ($Root in $Roots) {
+            $Exe = Join-Path $Root $Candidate.rel
+            if (Test-Path $Exe) { return [PSCustomObject]@{ app = $Candidate.app; path = $Exe } }
+        }
+    }
+    return $null
+}
+
+# A booth whose software is not in the Startup folder shows an empty desktop at
+# power-on and nobody notices until the event. The agent only set existing
+# shortcuts to maximized; it now makes sure there is one, enabled.
+$StartupApproved = "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+
+function Set-BoothAutostart {
+    $Booth = Find-BoothExe
+    if (-not $Booth) { return "no booth software installed" }
+
+    $Enabled = @(Get-AutostartEntries | Where-Object { $_.enabled -and "$($_.command)" -like "*$($Booth.path)*" })
+    if ($Enabled.Count) { return "$($Booth.app) started by Windows ($($Enabled[0].source))" }
+
+    $Folder = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+    New-Item -ItemType Directory -Path $Folder -Force | Out-Null
+    $LinkName = "$($Booth.app).lnk"
+    $Link = Join-Path $Folder $LinkName
+
+    $Shell = New-Object -ComObject WScript.Shell
+    $Shortcut = $Shell.CreateShortcut($Link)
+    $Shortcut.TargetPath = $Booth.path
+    $Shortcut.WorkingDirectory = Split-Path $Booth.path
+    $Shortcut.WindowStyle = 3
+    $Shortcut.Save()
+
+    # So it cannot stay unticked in the Startup tab of the Task Manager.
+    Remove-ItemProperty -Path "HKLM:\$StartupApproved" -Name $LinkName -ErrorAction SilentlyContinue
+    Invoke-OnUserHives -Action {
+        param($Hive)
+        Remove-ItemProperty -Path "$Hive\$StartupApproved" -Name $LinkName -ErrorAction SilentlyContinue
+    }
+
+    Write-Log "Startup shortcut created for $($Booth.app): $Link"
+    return "$($Booth.app) startup shortcut created"
+}
+
 function Set-KioskSettings {
     $Errors = @()
     $Done = @()
@@ -2887,6 +2941,14 @@ function Set-KioskSettings {
     }
     catch { $Errors += "shortcuts: $($_.Exception.Message)" }
 
+    # The booth software must be in the Startup folder, and enabled.
+    $Autostart = $null
+    try {
+        $Autostart = Set-BoothAutostart
+        $Done += "autostart"
+    }
+    catch { $Errors += "autostart: $($_.Exception.Message)" }
+
     # Reported only: automatic sign-in at power-on.
     $Winlogon = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -ErrorAction SilentlyContinue
     $AutoLogon = if ("$($Winlogon.AutoAdminLogon)" -eq "1" -and $Winlogon.DefaultUserName) { "$($Winlogon.DefaultUserName)" } else { $null }
@@ -2899,6 +2961,7 @@ function Set-KioskSettings {
         done              = $Done
         errors            = $Errors
         shortcutsFixed    = $Fixed
+        autostart         = $Autostart
         autoLogon         = $AutoLogon
     }
     Write-Log "Kiosk settings applied ($($Done -join ', '))$(if ($Errors) { " errors: $($Errors -join ' | ')" })"

@@ -261,7 +261,15 @@ policy; the per-user SCOOBE switch does not cover them); sets display scaling to
 for every user from their next sign-in (`LogPixels` 96 + `Win8DpiScaling`), only when
 every screen's native mode (EDID) is at most 1920 px wide, since LumaBooth/dslrBooth
 screens are designed for 1920x1080 at 100 % and a 4K screen at 100 % is unreadable;
-sets the dslrBooth/LumaBooth shortcuts of the Startup folders to "Maximized". The
+sets the dslrBooth/LumaBooth shortcuts of the Startup folders to "Maximized". Since 1.48.0 it also makes sure there **is** such a shortcut (`Set-BoothAutostart`, step
+`autostart`): a booth whose software is not in the Startup folder shows an empty desktop
+at power-on and nobody notices until the event. The agent looks for LumaBooth, else
+dslrBooth (a folder named LumaBooth may hold dslrBooth.exe: only LumaBooth.exe is
+LumaBooth), checks every autostart it already knows (Run keys, Startup folders,
+scheduled tasks) for an **enabled** entry pointing at that exe, and creates a maximized
+shortcut in the all-users Startup folder when there is none, clearing its
+`StartupApproved` values so it cannot stay unticked in the Task Manager. The result is
+reported in `kiosk.autostart`. The
 result is reported in `kiosk` (with the automatic sign-in user, read only) and shown
 in the "Logiciel" column.
 

@@ -492,7 +492,7 @@ function videoCheck(video) {
 
 // Kiosk settings applied at power-on on booths (agent >= 1.22.0): no sleep,
 // lock, screensaver, notifications; startup shortcut maximized.
-const KIOSK_PARTS = { power: "veille et écran", updates: "redémarrages Windows Update", oobe: "écrans de configuration après mise à jour", scaling: "échelle d'affichage 100 % (à la prochaine ouverture de session)", users: "écran de veille et notifications", shortcuts: "raccourci de démarrage" };
+const KIOSK_PARTS = { power: "veille et écran", updates: "redémarrages Windows Update", oobe: "écrans de configuration après mise à jour", scaling: "échelle d'affichage 100 % (à la prochaine ouverture de session)", users: "écran de veille et notifications", shortcuts: "raccourci de démarrage", autostart: "logiciel photo au démarrage", password: "compte sans mot de passe" };
 
 function kioskCheck(kiosk) {
   if (!kiosk) return null;
@@ -502,6 +502,8 @@ function kioskCheck(kiosk) {
     ...asList(kiosk.done).map((part) => `OK : ${KIOSK_PARTS[part] || part}`),
     ...errors.map((error) => `ERREUR ${error}`),
     kiosk.shortcutsFixed ? `${kiosk.shortcutsFixed} raccourci(s) passé(s) en maximisé` : null,
+    // 1.48.0: the booth software is in the Startup folder, and enabled.
+    kiosk.autostart ? `Démarrage : ${kiosk.autostart}` : null,
     kiosk.autoLogon ? `Ouverture de session automatique : ${kiosk.autoLogon}` : "Pas d'ouverture de session automatique configurée",
   ].filter(Boolean).join("\n");
   return check(errors.length === 0, errors.length ? "Mode kiosque : erreur" : "Mode kiosque", title);
