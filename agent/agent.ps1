@@ -540,6 +540,7 @@ function Get-AgentStatus {
         lightsDiag        = $(try { Get-LightsDiagnostics -Arduino $Arduino } catch { $null })
         kiosk             = $KioskStatus
         installs          = $InstallStatus
+        chromeUpdate      = $ChromeUpdate
         cleanup           = $CleanupStatus
         previousBoothId   = $PreviousBoothId
         computerNameNext  = $(try { $Next = Get-PendingComputerName; if ($Next -and $Next -ne $env:COMPUTERNAME) { $Next } else { $null } } catch { $null })
@@ -2011,24 +2012,39 @@ function Repair-AutoLogon {
 # Giving the booth account no password at all removes the secret that can go
 # stale. A blank password is still refused over the network by Windows
 # (LimitBlankPasswordUse, on by default): it only opens the console.
-# Local accounts only, never on a domain-joined PC. Returns $true when the
-# account ends up without a password.
+# Local accounts only, never on a domain-joined PC. Returns "done", or the
+# reason it left the account alone: 1.45.0 abstained silently on CINEBOOTH-26
+# and the dashboard could not say which check had stopped it.
 function Clear-AutoLogonPassword {
-    if ((Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).PartOfDomain) { return $false }
+    if ((Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).PartOfDomain) { return "PC joined to a domain" }
 
     $Winlogon = Get-ItemProperty -Path $WinlogonKey -ErrorAction SilentlyContinue
-    if (-not $Winlogon) { return $false }
+    if (-not $Winlogon) { return "no Winlogon key" }
 
     # DefaultUserName may be "COMPUTER\user" or ".\user".
     $User = "$($Winlogon.DefaultUserName)".Trim().Split("\")[-1]
-    if (-not $User) { return $false }
+    if (-not $User) { return "no automatic sign-in user set" }
 
+    # Get-LocalUser is missing on some builds: Win32_UserAccount as a fallback.
+    $Source = $null
     $Account = Get-LocalUser -Name $User -ErrorAction SilentlyContinue
-    # Not a local account (Microsoft account) or gone: leave it alone.
-    if (-not $Account -or ("$($Account.PrincipalSource)" -and "$($Account.PrincipalSource)" -ne "Local")) { return $false }
+    # Some Windows 10 builds leave PrincipalSource empty on local accounts.
+    if ($Account) { $Source = "$($Account.PrincipalSource)"; if (-not $Source) { $Source = "Local" } }
+    else {
+        $Filter = "LocalAccount=True AND Name='$($User -replace "'", "''")'"
+        if (Get-CimInstance Win32_UserAccount -Filter $Filter -ErrorAction SilentlyContinue) { $Source = "Local" }
+    }
+    if (-not $Source) { return "no local account named $User" }
+    if ($Source -ne "Local") { return "$User is a $Source account" }
 
+    # Set-LocalUser first, ADSI where the module is missing.
     $Empty = New-Object System.Security.SecureString
-    Set-LocalUser -Name $User -Password $Empty -PasswordNeverExpires $true -ErrorAction Stop
+    try { Set-LocalUser -Name $User -Password $Empty -PasswordNeverExpires $true -ErrorAction Stop }
+    catch {
+        $Adsi = [ADSI]"WinNT://$env:COMPUTERNAME/$User,user"
+        $Adsi.SetPassword("")
+        $Adsi.SetInfo()
+    }
 
     # Winlogon reads DefaultPassword before the LSA secret, so an empty one
     # replaces the stale secret. Nothing is disclosed: the account has no
@@ -2037,7 +2053,7 @@ function Clear-AutoLogonPassword {
     Set-ItemProperty -Path $WinlogonKey -Name "DefaultPassword" -Value ""
     Remove-ItemProperty -Path $WinlogonKey -Name "AutoLogonCount" -ErrorAction SilentlyContinue
 
-    return $true
+    return "done"
 }
 
 # Reported in the status: why a booth may ask for a password at power-on.
@@ -2054,8 +2070,10 @@ function Get-AutoLogonStatus {
         registryPwd = [bool]($Winlogon.PSObject.Properties.Name -contains "DefaultPassword")
         domainOk    = -not $Winlogon.DefaultDomainName -or "$($Winlogon.DefaultDomainName)" -eq $Target
         # Booth account left without a password (see Clear-AutoLogonPassword):
-        # $null on the mother station and domain-joined PCs, untouched there.
-        noPassword  = $script:AutoLogonNoPassword
+        # $null on the mother station, which is not a kiosk type. When $false,
+        # noPasswordWhy says which check stopped the agent.
+        noPassword    = $script:AutoLogonNoPassword
+        noPasswordWhy = $script:AutoLogonNoPasswordWhy
         # What actually happened at the last power-on (see Update-UnattendedLogon)
         unattended  = $script:UnattendedLogon
     }
@@ -2574,6 +2592,90 @@ function Send-Inventory {
 }
 
 # --------------------------------------------------
+# CHROME UPDATE
+# --------------------------------------------------
+
+# Chrome Remote Desktop stopped working on CINEBOOTH-26 until Chrome was
+# updated by hand (2026-11-09). A booth is off most of the time, so Google's
+# own scheduled update rarely gets its turn, and Chrome drifts versions behind
+# until its remote desktop host no longer talks to Google's servers. At each
+# power-on the agent wakes Google's updater and lets it do the work: nothing is
+# downloaded here, no restart, and Chrome applies the new version by itself.
+# Kiosk booths only (the mother station keeps its own pace).
+$ChromeUpdate = $null
+$GoogleUpdatePolicy = "HKLM:\SOFTWARE\Policies\Google\Update"
+# Chrome's own app id for the per-app update policy.
+$ChromeUpdatePolicy = "Update{8A69D345-D564-463C-AFF1-A69D9E530F96}"
+
+function Get-ChromeVersion {
+    foreach ($Key in @("HKLM:\SOFTWARE\WOW6432Node\Google\Chrome\BLBeacon", "HKLM:\SOFTWARE\Google\Chrome\BLBeacon")) {
+        $Version = (Get-ItemProperty -Path $Key -Name "version" -ErrorAction SilentlyContinue).version
+        if ($Version) { return "$Version" }
+    }
+    foreach ($Exe in @("${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe")) {
+        if (Test-Path $Exe) { return "$((Get-Item $Exe).VersionInfo.ProductVersion)" }
+    }
+    return $null
+}
+
+# The updater Google ships: GoogleUpdater (since 2023) first, then the
+# historical GoogleUpdate.exe, whose path is in the registry.
+function Get-ChromeUpdater {
+    $Roots = @("${env:ProgramFiles(x86)}\Google\GoogleUpdater", "$env:ProgramFiles\Google\GoogleUpdater")
+    $New = Get-ChildItem -Path $Roots -Filter "updater.exe" -Recurse -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($New) { return [PSCustomObject]@{ name = "GoogleUpdater"; path = $New.FullName; args = @("--wake-all") } }
+
+    foreach ($Key in @("HKLM:\SOFTWARE\WOW6432Node\Google\Update", "HKLM:\SOFTWARE\Google\Update")) {
+        $Path = (Get-ItemProperty -Path $Key -Name "path" -ErrorAction SilentlyContinue).path
+        if ($Path -and (Test-Path $Path)) { return [PSCustomObject]@{ name = "GoogleUpdate"; path = $Path; args = @("/ua", "/installsource", "scheduler") } }
+    }
+    return $null
+}
+
+function Update-Chrome {
+    $Before = Get-ChromeVersion
+    # Chrome not installed on this booth: nothing to keep up to date.
+    if (-not $Before) { return }
+
+    # A policy set to 0 blocks every update: forcing them means lifting it.
+    $PolicyFixed = @()
+    foreach ($Name in @("UpdateDefault", $ChromeUpdatePolicy)) {
+        $Value = (Get-ItemProperty -Path $GoogleUpdatePolicy -Name $Name -ErrorAction SilentlyContinue).$Name
+        if ($null -ne $Value -and [int]$Value -eq 0) {
+            Set-ItemProperty -Path $GoogleUpdatePolicy -Name $Name -Value 1
+            $PolicyFixed += $Name
+            Write-Log "Chrome updates were disabled by policy ($Name): re-enabled"
+        }
+    }
+
+    $Updater = Get-ChromeUpdater
+    $Failure = $null
+    if ($Updater) {
+        try {
+            $Process = Start-Process -FilePath $Updater.path -ArgumentList $Updater.args -WindowStyle Hidden -PassThru -ErrorAction Stop
+            # It hands the download to its background service: do not hold the
+            # agent here, the new version applies on its own.
+            if (-not $Process.WaitForExit(120000)) { Write-Log "Chrome update: $($Updater.name) still running, left to finish" }
+        }
+        catch { $Failure = "$($_.Exception.Message)" }
+    }
+    else { $Failure = "no Google updater found" }
+
+    $After = Get-ChromeVersion
+    if ($After -ne $Before) { Write-Log "Chrome updated: $Before -> $After" }
+
+    $script:ChromeUpdate = [PSCustomObject]@{
+        at          = (Get-Date).ToUniversalTime().ToString("o")
+        version     = $After
+        previous    = $(if ($After -ne $Before) { $Before } else { $null })
+        updater     = $(if ($Updater) { $Updater.name } else { $null })
+        policyFixed = $PolicyFixed
+        error       = $Failure
+    }
+}
+
+# --------------------------------------------------
 # KIOSK SETTINGS
 # --------------------------------------------------
 
@@ -2583,9 +2685,11 @@ function Send-Inventory {
 # Applied at power-on (idempotent), the result is reported in "kiosk".
 $Kiosk = $false
 $KioskStatus = $null
-# $true once the booth account has been left without a password; stays $null on
-# the mother station and on domain-joined PCs, where nothing is touched.
+# $true once the booth account has been left without a password, $false when a
+# check stopped the agent (reason in $AutoLogonNoPasswordWhy); stays $null on
+# the mother station, which is not a kiosk type.
 $AutoLogonNoPassword = $null
+$AutoLogonNoPasswordWhy = $null
 
 # Runs $Action on the registry hive (Registry::HKEY_USERS\...) of each real
 # user profile, loading the hive of users who are not logged on.
@@ -2705,13 +2809,22 @@ function Set-KioskSettings {
     # The booth account keeps no password: nothing to go stale, no sign-in
     # screen at power-on. Reported in "autoLogon.noPassword".
     try {
-        if (Clear-AutoLogonPassword) {
+        $Why = Clear-AutoLogonPassword
+        $script:AutoLogonNoPasswordWhy = $Why
+        if ($Why -eq "done") {
             if (-not $script:AutoLogonNoPassword) { Write-Log "Booth account left without a password: automatic sign-in cannot go stale" }
             $script:AutoLogonNoPassword = $true
             $Done += "password"
         }
+        else {
+            $script:AutoLogonNoPassword = $false
+            Write-Log "Booth account password left as is: $Why"
+        }
     }
-    catch { $Errors += "password: $($_.Exception.Message)" }
+    catch {
+        $script:AutoLogonNoPasswordWhy = "$($_.Exception.Message)"
+        $Errors += "password: $($_.Exception.Message)"
+    }
 
     # Booth software started maximized from the Startup folders.
     $Fixed = 0
@@ -3077,6 +3190,9 @@ while ($true) {
 
                 try { Remove-Bloatware }
                 catch { Write-Log "Apps removal error: $($_.Exception.Message)" }
+
+                try { Update-Chrome }
+                catch { Write-Log "Chrome update error: $($_.Exception.Message)" }
             }
             $SetupDone.kiosk = $true
         }

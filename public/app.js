@@ -531,6 +531,18 @@ function installChecks(installs) {
     : check(false, `${p.name} : installation en erreur`, p.error || ""));
 }
 
+// Chrome kept up to date at each power-on (agent >= 1.46.0): a booth is off
+// most of the time, so Google's own scheduled update rarely gets its turn and
+// Chrome Remote Desktop ends up refusing to connect (CINEBOOTH-26, 09/11/2026).
+function chromeCheck(chrome) {
+  if (!chrome) return null;
+  const when = `Vérifié le ${formatDate(chrome.at)}`;
+  if (chrome.error) return check(false, `Chrome ${chrome.version || "?"} : mise à jour impossible`, `${chrome.error}\n${when}`);
+  const fixed = asList(chrome.policyFixed).length ? "\nMises à jour Chrome réactivées (elles étaient bloquées par une stratégie)" : "";
+  const from = chrome.previous ? ` (depuis ${chrome.previous})` : "";
+  return check(true, `Chrome ${chrome.version || "?"}${from}`, `Mis à jour à chaque démarrage par ${chrome.updater || "l'updater Google"}${fixed}\n${when}`);
+}
+
 // BIOS "power on when the power comes back" (agent >= 1.32.0): readable
 // only on Dell, HP and Lenovo; "?" with the PC model otherwise.
 function biosCheck(hardware) {
@@ -567,6 +579,11 @@ function autoLogonCheck(autoLogon) {
   if (!autoLogon.domainOk) return check(false, `Session auto : ancien nom (${autoLogon.domain})`, "Corrigé par l'agent : sans mot de passe au démarrage suivant");
   // 1.45.0: the booth account has no password at all, so nothing can go stale.
   if (autoLogon.noPassword) return check(true, `Session auto (${autoLogon.user || "?"}, sans mot de passe)`, "Le compte de la borne n'a aucun mot de passe : rien ne peut se périmer");
+  // 1.46.0: it says which check stopped it, instead of staying silent.
+  if (autoLogon.noPassword === false) {
+    return check(null, `Session auto (${autoLogon.user || "?"}, mot de passe gardé)`,
+      `L'agent n'a pas retiré le mot de passe du compte : ${autoLogon.noPasswordWhy || "raison inconnue"}`);
+  }
   return check(true, `Session auto (${autoLogon.user || "?"})`);
 }
 
@@ -608,6 +625,7 @@ function programsCell(s) {
     kioskCheck(s.kiosk),
     cleanupCheck(s.cleanup),
     ...installChecks(s.installs),
+    chromeCheck(s.chromeUpdate),
     autoLogonCheck(s.autoLogon),
   ].filter(Boolean);
   return el("ul", { class: "checks" }, ...items);

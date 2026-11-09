@@ -279,6 +279,27 @@ account, and never on the mother station, which is not a kiosk type. Windows sti
 refuses a blank password over the network (`LimitBlankPasswordUse`, on by default): it
 only opens the console. Reported as `autoLogon.noPassword`, green in the dashboard.
 
+1.45.0 abstained silently when one of those checks stopped it, and the dashboard could
+not say which: since 1.46.0 the reason is reported in `autoLogon.noPasswordWhy` and
+shown ("mot de passe gardé"). Also 1.46.0: `Get-LocalUser` is missing on some builds
+and leaves `PrincipalSource` empty on others, so the account is confirmed through
+`Win32_UserAccount` as well, and the password is blanked through ADSI where the
+`LocalAccounts` module is absent.
+
+### Chrome kept up to date (booths only)
+
+A booth is off most of the time, so Google's own scheduled update rarely gets its turn
+and Chrome drifts versions behind until its remote desktop host stops connecting —
+CINEBOOTH-26 lost Chrome Remote Desktop this way on 2026-11-09, and a manual Chrome
+update fixed it. At each power-on (agent >= 1.46.0, `Update-Chrome`, kiosk booths only)
+the agent wakes Google's own updater: `GoogleUpdater` (`--wake-all`) when present,
+otherwise the historical `GoogleUpdate.exe` (`/ua`) whose path is in the registry.
+Nothing is downloaded by the agent and nothing restarts; Chrome applies the new version
+by itself. A Google Update policy explicitly set to 0 (`UpdateDefault`, or Chrome's own
+app id) blocks every update, so the agent puts it back to 1 — forcing updates means
+lifting that. Reported in `chromeUpdate` (version, previous version when it changed,
+which updater, policies lifted) and shown in the "Programmes" column.
+
 What matters is that Windows opens the session by itself after a power cut, which a
 user without a password does as well as automatic sign-in. So the agent watches each
 power-on (boot, or resume after > 10 min off): a desktop (explorer.exe) within 3 min
