@@ -263,8 +263,21 @@ every screen's native mode (EDID) is at most 1920 px wide, since LumaBooth/dslrB
 screens are designed for 1920x1080 at 100 % and a 4K screen at 100 % is unreadable;
 sets the dslrBooth/LumaBooth shortcuts of the Startup folders to "Maximized". The
 result is reported in `kiosk` (with the automatic sign-in user, read only) and shown
-in the "Logiciel" column. User passwords and automatic sign-in are not changed: that
-would need a password in this public repository.
+in the "Logiciel" column.
+
+Since 1.45.0 the agent also leaves the booth account **without any password**
+(`Clear-AutoLogonPassword`, step `password`). The automatic sign-in's password is kept
+in an LSA secret, which goes stale as soon as the account's password changes or a PIN
+is added: Windows then shows its sign-in screen again with `AutoAdminLogon` still at 1,
+and nothing says why — CINEBOOTH-26 stopped on a password this way on 2026-11-09. An
+account with no password has no secret that can go stale. The agent blanks the password
+of the account named in `DefaultUserName`, sets `AutoAdminLogon` to 1, writes an empty
+`DefaultPassword` (read before the LSA secret, so it replaces a stale one; it discloses
+nothing, the account has no password) and removes `AutoLogonCount`, which would make the
+sign-in one-shot. Local accounts only, never on a domain-joined PC nor on a Microsoft
+account, and never on the mother station, which is not a kiosk type. Windows still
+refuses a blank password over the network (`LimitBlankPasswordUse`, on by default): it
+only opens the console. Reported as `autoLogon.noPassword`, green in the dashboard.
 
 What matters is that Windows opens the session by itself after a power cut, which a
 user without a password does as well as automatic sign-in. So the agent watches each
@@ -274,6 +287,10 @@ screen (`autoLogon.unattended`, kept in `logon-check.json`, agent >= 1.42.0). An
 installed or updated after power-on can only confirm it from the boot time, never
 deny it (after a Fast Startup resume the boot time is old). The dashboard shows
 "Session auto (sans mot de passe)" in green, or a red "mot de passe demandé".
+
+That check confirms, it never denies: someone typing the password within the 3 min
+counts as unattended. CINEBOOTH-26 read `unattended: true, 58 s` on the very power-on
+where it had asked for a password. Only `noPassword` above says it cannot happen.
 
 LumaBooth starting windowed comes from the event config, not from Windows: the
 event generator's `default-config.json` (`captureSettings.isStartInFullscreenEnabled`,

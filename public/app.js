@@ -565,6 +565,8 @@ function autoLogonCheck(autoLogon) {
       : check(null, "Session auto : désactivée", "Pas encore vérifié : l'agent le voit au prochain démarrage de la borne");
   }
   if (!autoLogon.domainOk) return check(false, `Session auto : ancien nom (${autoLogon.domain})`, "Corrigé par l'agent : sans mot de passe au démarrage suivant");
+  // 1.45.0: the booth account has no password at all, so nothing can go stale.
+  if (autoLogon.noPassword) return check(true, `Session auto (${autoLogon.user || "?"}, sans mot de passe)`, "Le compte de la borne n'a aucun mot de passe : rien ne peut se périmer");
   return check(true, `Session auto (${autoLogon.user || "?"})`);
 }
 

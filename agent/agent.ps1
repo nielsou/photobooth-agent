@@ -2004,6 +2004,42 @@ function Repair-AutoLogon {
     }
 }
 
+# A booth must never stop on a password. The automatic sign-in's password is
+# kept in an LSA secret, which goes stale as soon as the account's password
+# changes (or a PIN is added): Windows then shows the sign-in screen again with
+# AutoAdminLogon still at 1, and nothing says why (CINEBOOTH-26, 2026-11-09).
+# Giving the booth account no password at all removes the secret that can go
+# stale. A blank password is still refused over the network by Windows
+# (LimitBlankPasswordUse, on by default): it only opens the console.
+# Local accounts only, never on a domain-joined PC. Returns $true when the
+# account ends up without a password.
+function Clear-AutoLogonPassword {
+    if ((Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).PartOfDomain) { return $false }
+
+    $Winlogon = Get-ItemProperty -Path $WinlogonKey -ErrorAction SilentlyContinue
+    if (-not $Winlogon) { return $false }
+
+    # DefaultUserName may be "COMPUTER\user" or ".\user".
+    $User = "$($Winlogon.DefaultUserName)".Trim().Split("\")[-1]
+    if (-not $User) { return $false }
+
+    $Account = Get-LocalUser -Name $User -ErrorAction SilentlyContinue
+    # Not a local account (Microsoft account) or gone: leave it alone.
+    if (-not $Account -or ("$($Account.PrincipalSource)" -and "$($Account.PrincipalSource)" -ne "Local")) { return $false }
+
+    $Empty = New-Object System.Security.SecureString
+    Set-LocalUser -Name $User -Password $Empty -PasswordNeverExpires $true -ErrorAction Stop
+
+    # Winlogon reads DefaultPassword before the LSA secret, so an empty one
+    # replaces the stale secret. Nothing is disclosed: the account has no
+    # password. AutoLogonCount would make the sign-in one-shot.
+    Set-ItemProperty -Path $WinlogonKey -Name "AutoAdminLogon" -Value "1"
+    Set-ItemProperty -Path $WinlogonKey -Name "DefaultPassword" -Value ""
+    Remove-ItemProperty -Path $WinlogonKey -Name "AutoLogonCount" -ErrorAction SilentlyContinue
+
+    return $true
+}
+
 # Reported in the status: why a booth may ask for a password at power-on.
 function Get-AutoLogonStatus {
     $Winlogon = Get-ItemProperty -Path $WinlogonKey -ErrorAction SilentlyContinue
@@ -2017,6 +2053,9 @@ function Get-AutoLogonStatus {
         # Password in the registry (else maybe an LSA secret, not readable)
         registryPwd = [bool]($Winlogon.PSObject.Properties.Name -contains "DefaultPassword")
         domainOk    = -not $Winlogon.DefaultDomainName -or "$($Winlogon.DefaultDomainName)" -eq $Target
+        # Booth account left without a password (see Clear-AutoLogonPassword):
+        # $null on the mother station and domain-joined PCs, untouched there.
+        noPassword  = $script:AutoLogonNoPassword
         # What actually happened at the last power-on (see Update-UnattendedLogon)
         unattended  = $script:UnattendedLogon
     }
@@ -2544,6 +2583,9 @@ function Send-Inventory {
 # Applied at power-on (idempotent), the result is reported in "kiosk".
 $Kiosk = $false
 $KioskStatus = $null
+# $true once the booth account has been left without a password; stays $null on
+# the mother station and on domain-joined PCs, where nothing is touched.
+$AutoLogonNoPassword = $null
 
 # Runs $Action on the registry hive (Registry::HKEY_USERS\...) of each real
 # user profile, loading the hive of users who are not logged on.
@@ -2659,6 +2701,17 @@ function Set-KioskSettings {
         $Done += "users"
     }
     catch { $Errors += "users: $($_.Exception.Message)" }
+
+    # The booth account keeps no password: nothing to go stale, no sign-in
+    # screen at power-on. Reported in "autoLogon.noPassword".
+    try {
+        if (Clear-AutoLogonPassword) {
+            if (-not $script:AutoLogonNoPassword) { Write-Log "Booth account left without a password: automatic sign-in cannot go stale" }
+            $script:AutoLogonNoPassword = $true
+            $Done += "password"
+        }
+    }
+    catch { $Errors += "password: $($_.Exception.Message)" }
 
     # Booth software started maximized from the Startup folders.
     $Fixed = 0
