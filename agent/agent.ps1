@@ -2016,6 +2016,22 @@ function Repair-AutoLogon {
 # Local accounts only, never on a domain-joined PC. Returns "done", or the
 # reason it left the account alone: 1.45.0 abstained silently on CINEBOOTH-26
 # and the dashboard could not say which check had stopped it.
+# Renaming the booth account leaves DefaultUserName on the old name: Windows
+# tries to sign in as an account that no longer exists and shows the sign-in
+# screen, with AutoAdminLogon still at 1 (CINEBOOTH-26, 2026-11-10: converting
+# its Microsoft account to a local one renamed djdam to admin in passing). The
+# profile folder keeps its old name, so the account to take over is the one
+# holding the booth settings. Only ever one candidate: on anything ambiguous
+# the agent changes nothing and says so.
+function Find-BoothAccount {
+    $Accounts = @(Get-LocalAccounts | Where-Object { $_.source -eq "Local" -and $_.profile })
+    $Booth = @($Accounts | Where-Object { $_.booth })
+    if ($Booth.Count -eq 1) { return $Booth[0] }
+    $Admins = @($Accounts | Where-Object { $_.admin })
+    if ($Admins.Count -eq 1) { return $Admins[0] }
+    return $null
+}
+
 function Clear-AutoLogonPassword {
     if ((Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).PartOfDomain) { return "PC joined to a domain" }
 
@@ -2024,7 +2040,6 @@ function Clear-AutoLogonPassword {
 
     # DefaultUserName may be "COMPUTER\user" or ".\user".
     $User = "$($Winlogon.DefaultUserName)".Trim().Split("\")[-1]
-    if (-not $User) { return "no automatic sign-in user set" }
 
     # Get-LocalUser is missing on some builds: Win32_UserAccount as a fallback.
     $Source = $null
@@ -2035,7 +2050,18 @@ function Clear-AutoLogonPassword {
         $Filter = "LocalAccount=True AND Name='$($User -replace "'", "''")'"
         if (Get-CimInstance Win32_UserAccount -Filter $Filter -ErrorAction SilentlyContinue) { $Source = "Local" }
     }
-    if (-not $Source) { return "no local account named $User" }
+    if (-not $Source) {
+        $Account = Find-BoothAccount
+        if (-not $Account) {
+            if ($User) { return "no local account named $User" }
+            return "no automatic sign-in user set"
+        }
+        Set-ItemProperty -Path $WinlogonKey -Name "DefaultUserName" -Value "$($Account.name)"
+        Set-ItemProperty -Path $WinlogonKey -Name "DefaultDomainName" -Value "$env:COMPUTERNAME"
+        Write-Log "Automatic sign-in: user $(if ($User) { $User } else { '(none)' }) -> $($Account.name)"
+        $User = "$($Account.name)"
+        $Source = "Local"
+    }
     if ($Source -ne "Local") { return "$User is a $Source account" }
 
     # Set-LocalUser first, ADSI where the module is missing.
@@ -2795,7 +2821,11 @@ function Get-BoothExePaths {
     $Roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)})
     $Roots += @(Get-CimInstance Win32_UserProfile -Filter "Special=False" -ErrorAction SilentlyContinue |
         Where-Object { $_.LocalPath } | ForEach-Object { Join-Path $_.LocalPath "AppData\Local\Programs" })
-    foreach ($Root in $Roots | Where-Object { $_ }) { $Paths += (Join-Path $Root "$App\$App.exe") }
+    # LumaBooth 8 installs as "Program Files\dslrBooth\LumaBooth.exe": the
+    # folder names and the exe names do not match, so cross them.
+    foreach ($Root in $Roots | Where-Object { $_ }) {
+        foreach ($Folder in @("LumaBooth", "dslrBooth")) { $Paths += (Join-Path $Root "$Folder\$App.exe") }
+    }
 
     return @($Paths | Where-Object { $_ } | Select-Object -Unique)
 }

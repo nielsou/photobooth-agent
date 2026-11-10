@@ -269,15 +269,29 @@ scheduled tasks) for an **enabled** entry pointing at that exe, and creates a ma
 shortcut when there is none, clearing its `StartupApproved` values so it cannot stay
 unticked in the Task Manager.
 
-Finding the exe takes 1.48.1 (`Get-BoothExePaths`): 1.48.0 only looked in Program Files
-and reported "no booth software installed" on a booth that was running LumaBooth 8.4 at
-that moment, because LumaBooth 8 installs **into the user profile**. The agent now takes,
-in this order, the path of the running process, the `InstallLocation` / `DisplayIcon` of
-the uninstall entries (per machine *and* per user), then `Program Files`, `Program Files
-(x86)` and every profile's `AppData\Local\Programs`. A per-profile install can only be
-started from that user's own Startup folder, so the shortcut goes there rather than in the
-all-users one. The result is reported in `kiosk.autostart`, next to the automatic sign-in
-user, and shown in the "Logiciel" column.
+Finding the exe takes 1.48.1 (`Get-BoothExePaths`): 1.48.0 guessed the path from the
+application's name and reported "no booth software installed" on a booth that was running
+LumaBooth 8.4 at that very moment. LumaBooth 8 is installed by the dslrBooth installer and
+lives in `C:\Program Files\dslrBooth\LumaBooth.exe` -- folder and exe do not match. The
+agent now takes, in this order, the path of the **running process**, the `InstallLocation`
+/ `DisplayIcon` of the uninstall entries (per machine *and* per user), then `LumaBooth` and
+`dslrBooth` under `Program Files`, `Program Files (x86)` and every profile's
+`AppData\Local\Programs`. The application is identified by the exe's name, not its
+folder's. An install inside a profile gets its shortcut in that user's own Startup folder,
+since the all-users one would not start it. The result is reported in `kiosk.autostart`,
+next to the automatic sign-in user, and shown in the "Logiciel" column.
+
+Since 1.49.0 the agent also repoints the automatic sign-in when the booth account has
+been **renamed** (`Find-BoothAccount`). Winlogon stores the user name, so a rename leaves
+it on a name that no longer exists: Windows then tries to sign in as nobody and shows the
+sign-in screen, with `AutoAdminLogon` still at 1 and nothing saying why. CINEBOOTH-26 hit
+this on 2026-11-10: converting its Microsoft account to a local one renamed `djdam` to
+`admin` in passing, and `DefaultUserName` stayed on `djdam`. The profile folder keeps its
+old name, so the account to take over is the one holding the booth settings (`booth`),
+else the only local administrator. **Only ever one candidate**: on anything ambiguous the
+agent changes nothing and `noPasswordWhy` says so. That booth kept starting by itself
+meanwhile only because its single account has no password at all -- which is exactly what
+the agent is for, but it was not the agent doing it.
 
 Since 1.45.0 the agent also leaves the booth account **without any password**
 (`Clear-AutoLogonPassword`, step `password`). The automatic sign-in's password is kept
