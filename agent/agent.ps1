@@ -546,7 +546,7 @@ function Get-AgentStatus {
         computerNameNext  = $(try { $Next = Get-PendingComputerName; if ($Next -and $Next -ne $env:COMPUTERNAME) { $Next } else { $null } } catch { $null })
         camera            = $(try { Get-CameraStatus } catch { $null })
         autoLogon         = $(try { Get-AutoLogonStatus } catch { $null })
-        accounts          = $(try { Get-LocalAccounts } catch { $null })
+        accounts          = @(try { Get-LocalAccounts } catch { @() })
         hardware          = $(try { Get-HardwareInfo } catch { $null })
         displays          = $(try { Get-DisplayInfo } catch { $null })
         software          = $(try { Get-BoothSoftware } catch { Write-Log "Software check error: $($_.Exception.Message)"; $null })
@@ -2765,20 +2765,49 @@ function Set-RegistryValue {
     New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
 }
 
+# Where one booth application may live, best source first. Program Files is not
+# enough: LumaBooth 8 installs into the user profile, so a booth running
+# LumaBooth 8.4 was reported as having no booth software at all.
+function Get-BoothExePaths {
+    param([string]$App)
+
+    $Paths = @()
+
+    # 1. The running process: the one source that cannot be stale.
+    $Proc = Get-Process -Name $App -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1
+    if ($Proc) { $Paths += "$($Proc.Path)" }
+
+    # 2. Where the installer says it put it, machine-wide and per user.
+    $Uninstall = @(Get-ItemProperty -Path @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "Registry::HKEY_USERS\*\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    ) -ErrorAction SilentlyContinue | Where-Object { "$($_.DisplayName)" -match "^$App" })
+
+    foreach ($Entry in $Uninstall) {
+        $Location = "$($Entry.InstallLocation)".Trim().Trim('"')
+        if ($Location) { $Paths += (Join-Path $Location "$App.exe") }
+        $Icon = "$($Entry.DisplayIcon)".Split(",")[0].Trim().Trim('"')
+        if ($Icon -like "*.exe") { $Paths += $Icon }
+    }
+
+    # 3. The usual folders: Program Files, then every profile's own Programs.
+    $Roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)})
+    $Roots += @(Get-CimInstance Win32_UserProfile -Filter "Special=False" -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalPath } | ForEach-Object { Join-Path $_.LocalPath "AppData\Local\Programs" })
+    foreach ($Root in $Roots | Where-Object { $_ }) { $Paths += (Join-Path $Root "$App\$App.exe") }
+
+    return @($Paths | Where-Object { $_ } | Select-Object -Unique)
+}
+
 # The booth software Windows must start by itself: LumaBooth when installed,
-# dslrBooth otherwise (same rule as the welcome video). Recent dslrBooth
-# installers also use a "LumaBooth" folder, so only a folder holding
-# LumaBooth.exe is LumaBooth.
+# dslrBooth otherwise (same rule as the welcome video).
 function Find-BoothExe {
-    $Roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
-    foreach ($Candidate in @(
-        @{ app = "LumaBooth"; rel = "LumaBooth\LumaBooth.exe" },
-        @{ app = "dslrBooth"; rel = "dslrBooth\dslrBooth.exe" },
-        @{ app = "dslrBooth"; rel = "LumaBooth\dslrBooth.exe" }
-    )) {
-        foreach ($Root in $Roots) {
-            $Exe = Join-Path $Root $Candidate.rel
-            if (Test-Path $Exe) { return [PSCustomObject]@{ app = $Candidate.app; path = $Exe } }
+    foreach ($App in @("LumaBooth", "dslrBooth")) {
+        foreach ($Exe in @(Get-BoothExePaths -App $App)) {
+            if (Test-Path -Path $Exe -PathType Leaf) {
+                return [PSCustomObject]@{ app = $App; path = "$((Get-Item $Exe).FullName)" }
+            }
         }
     }
     return $null
@@ -2796,7 +2825,12 @@ function Set-BoothAutostart {
     $Enabled = @(Get-AutostartEntries | Where-Object { $_.enabled -and "$($_.command)" -like "*$($Booth.path)*" })
     if ($Enabled.Count) { return "$($Booth.app) started by Windows ($($Enabled[0].source))" }
 
+    # An application installed inside a profile can only be started from that
+    # user's own Startup folder; anything else goes in the all-users one.
     $Folder = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+    $Owner = @(Get-CimInstance Win32_UserProfile -Filter "Special=False" -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalPath -and $Booth.path -like "$($_.LocalPath)\*" } | Select-Object -First 1)
+    if ($Owner.Count) { $Folder = Join-Path "$($Owner[0].LocalPath)" "AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup" }
     New-Item -ItemType Directory -Path $Folder -Force | Out-Null
     $LinkName = "$($Booth.app).lnk"
     $Link = Join-Path $Folder $LinkName

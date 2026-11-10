@@ -264,14 +264,20 @@ screens are designed for 1920x1080 at 100 % and a 4K screen at 100 % is unreadab
 sets the dslrBooth/LumaBooth shortcuts of the Startup folders to "Maximized". Since 1.48.0 it also makes sure there **is** such a shortcut (`Set-BoothAutostart`, step
 `autostart`): a booth whose software is not in the Startup folder shows an empty desktop
 at power-on and nobody notices until the event. The agent looks for LumaBooth, else
-dslrBooth (a folder named LumaBooth may hold dslrBooth.exe: only LumaBooth.exe is
-LumaBooth), checks every autostart it already knows (Run keys, Startup folders,
+dslrBooth, checks every autostart it already knows (Run keys, Startup folders,
 scheduled tasks) for an **enabled** entry pointing at that exe, and creates a maximized
-shortcut in the all-users Startup folder when there is none, clearing its
-`StartupApproved` values so it cannot stay unticked in the Task Manager. The result is
-reported in `kiosk.autostart`. The
-result is reported in `kiosk` (with the automatic sign-in user, read only) and shown
-in the "Logiciel" column.
+shortcut when there is none, clearing its `StartupApproved` values so it cannot stay
+unticked in the Task Manager.
+
+Finding the exe takes 1.48.1 (`Get-BoothExePaths`): 1.48.0 only looked in Program Files
+and reported "no booth software installed" on a booth that was running LumaBooth 8.4 at
+that moment, because LumaBooth 8 installs **into the user profile**. The agent now takes,
+in this order, the path of the running process, the `InstallLocation` / `DisplayIcon` of
+the uninstall entries (per machine *and* per user), then `Program Files`, `Program Files
+(x86)` and every profile's `AppData\Local\Programs`. A per-profile install can only be
+started from that user's own Startup folder, so the shortcut goes there rather than in the
+all-users one. The result is reported in `kiosk.autostart`, next to the automatic sign-in
+user, and shown in the "Logiciel" column.
 
 Since 1.45.0 the agent also leaves the booth account **without any password**
 (`Clear-AutoLogonPassword`, step `password`). The automatic sign-in's password is kept
