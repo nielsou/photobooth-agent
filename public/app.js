@@ -480,11 +480,25 @@ function driverChecks(drivers) {
 }
 
 // Welcome video put where dslrBooth / LumaBooth expect it (agent >= 1.17.0).
-function videoCheck(video) {
+function videoCheck(video, software) {
   if (!video) return null;
   const targets = asList(video.targets);
   if (targets.length === 0) return check(false, "Vidéo d'accueil : ni dslrBooth ni LumaBooth trouvé");
-  const title = targets.map((t) => `${t.ok ? "OK" : "ERREUR"} ${t.path}${t.error ? " : " + t.error : ""}`).join("\n");
+  const title = [
+    ...targets.map((t) => `${t.ok ? "OK" : "ERREUR"} ${t.path}${t.error ? " : " + t.error : ""}`),
+    // 1.50.0: where LumaBooth keeps its voice packs, and which ones are there.
+    video.folder ? `Packs de voix : ${video.folder}` : null,
+    asList(video.voices).length ? `Installés : ${asList(video.voices).join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  // The copy can succeed in a folder the booth software never reads: until
+  // 1.50.0 the video went to the dslrBooth profile on booths running
+  // LumaBooth, and the dashboard still showed it green.
+  const apps = asList(software).map((x) => x.app);
+  if (video.app && apps.length && !apps.includes(video.app)) {
+    return check(false, `Vidéo d'accueil installée pour ${video.app}, la borne utilise ${apps.join(" et ")}`, title);
+  }
   return targets.every((t) => t.ok)
     ? check(true, `Vidéo d'accueil (${video.app})`, title)
     : check(false, `Vidéo d'accueil (${video.app}) : erreur`, title);
@@ -623,7 +637,7 @@ function programsCell(s) {
     ...driverChecks(s.drivers),
     ...printerSetupChecks(s.printerSetup, s.printerRepair),
     displaysCheck(s.displays),
-    videoCheck(s.startScreenVideo),
+    videoCheck(s.startScreenVideo, s.software),
     kioskCheck(s.kiosk),
     cleanupCheck(s.cleanup),
     ...installChecks(s.installs),

@@ -206,14 +206,26 @@ type in the dashboard applies right away (popups, drivers).
 
 `START_SCREEN_VIDEO` (`lib/printer-alerts.js`): the "touch to start" video on Google
 Drive, with its SHA-256. At power-on the agent puts it where the booth software
-expects it: LumaBooth if installed (`Program Files\<Luma...>\content\VirtualAttendant\
-Audio - American Female\photoboothparisvideo.mp4`), dslrBooth otherwise (each user's
+expects it: LumaBooth if installed (`<install folder>\content\VirtualAttendant\<voice
+pack>\photoboothparisvideo.mp4`), dslrBooth otherwise (each user's
 `AppData\Roaming\dslrBooth\Assets\VirtualAttendant\photoboothparis-ONETOUCH 3.0.mp4`,
 asset id `photoboothparis` used by event_generator). It is cached under
 `C:\ProgramData\PhotoboothAgent\media`, so a software update wiping it is fixed at the
 next power-on without downloading again. A copy refused because the file is in use
 (the booth software already playing it) is retried every 15 minutes. To change the
 video: upload it to Drive and update its id, SHA-256 and size.
+
+Since 1.50.0 the LumaBooth folder comes from `Find-BoothExe`, not from the application's
+name. Until then the agent looked for a folder whose name contained "Luma": on
+CINEBOOTH-26 and -27, where the dslrBooth installer put LumaBooth in `Program
+Files\dslrBooth`, it found none, fell back to the dslrBooth profile and copied the video
+to `AppData\Roaming\dslrBooth\Assets`, which LumaBooth never reads. Those booths had no
+welcome video at all and the dashboard showed the check **green**, because the copy did
+succeed -- just in the wrong place. The agent now installs into the `Audio - American
+Female` voice pack when it is there, into every installed pack when it is not (the event
+chooses one), and reports the voice folder and the packs found
+(`startScreenVideo.folder` / `.voices`). The dashboard also turns the check red when the
+video was installed for an application the booth does not run.
 
 ### Lights (Arduino / Smart Flash)
 

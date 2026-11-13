@@ -1565,24 +1565,41 @@ function Repair-PrinterQueues {
 # power-on without downloading it again. Refused unless the SHA-256 matches.
 $StartScreenVideo = $null
 $StartScreenStatus = $null
+$StartScreenFolder = $null
+$StartScreenVoices = @()
 $UsersRoot = Split-Path $env:PUBLIC
+# LumaBooth plays the video from the voice pack the event selects; this one is
+# the default and the only one seen in use so far (CINEBOOTH-32).
+$StartScreenVoice = "Audio - American Female"
 
 function Get-StartScreenTargets {
 
-    # LumaBooth: <Program Files>\<Luma...>\content\VirtualAttendant\Audio - American Female
-    # Recent dslrBooth installers also use a "LumaBooth" folder (with
-    # dslrBooth.exe in it): only a folder with LumaBooth.exe is LumaBooth.
-    $Luma = @(
-        foreach ($Root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ -and (Test-Path $_) }) {
-            Get-ChildItem -Path $Root -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match 'luma' -and (Test-Path (Join-Path $_.FullName "LumaBooth.exe")) } |
-                ForEach-Object { Join-Path $_.FullName "content\VirtualAttendant\Audio - American Female" } |
-                Where-Object { Test-Path $_ }
-        }
-    )
+    # LumaBooth: <install folder>\content\VirtualAttendant\<voice pack>. The
+    # install folder cannot be guessed from the application's name: LumaBooth 8
+    # is installed by the dslrBooth installer into "Program Files\dslrBooth"
+    # (CINEBOOTH-26 and -27). Looking for a folder named "Luma" therefore found
+    # nothing, the agent fell back to the dslrBooth profile, where LumaBooth
+    # never reads, and those booths had no welcome video at all (2026-11-13).
+    # Find-BoothExe looks for the exe where it really is.
+    $Booth = Find-BoothExe
+    if ($Booth -and $Booth.app -eq "LumaBooth") {
+        $Root = Join-Path (Split-Path $Booth.path) "content\VirtualAttendant"
+        $script:StartScreenFolder = $Root
 
-    if ($Luma.Count -gt 0) {
-        return @($Luma | ForEach-Object { [PSCustomObject]@{ app = "LumaBooth"; path = (Join-Path $_ "photoboothparisvideo.mp4") } })
+        $Voices = @(Get-ChildItem -Path $Root -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+        $script:StartScreenVoices = @($Voices | ForEach-Object { Split-Path $_ -Leaf })
+
+        # The default voice pack when it is there, every pack when it is not
+        # (the event may select another one), and the default one created when
+        # there is no pack at all.
+        $Default = Join-Path $Root $StartScreenVoice
+        $Picked = @(
+            if (Test-Path $Default) { $Default }
+            elseif ($Voices.Count) { $Voices }
+            else { $Default }
+        )
+
+        return @($Picked | ForEach-Object { [PSCustomObject]@{ app = "LumaBooth"; path = (Join-Path $_ "photoboothparisvideo.mp4") } })
     }
 
     # dslrBooth: each user profile that has dslrBooth assets. The asset id is
@@ -1659,6 +1676,10 @@ function Install-StartScreenVideo {
     $script:StartScreenStatus = [PSCustomObject]@{
         app     = if ($Targets.Count) { $Targets[0].app } else { $null }
         targets = $Results
+        # Where LumaBooth keeps its voice packs, and which ones are installed:
+        # the dashboard could not say why a booth had no welcome video.
+        folder  = $script:StartScreenFolder
+        voices  = @($script:StartScreenVoices)
     }
 }
 
