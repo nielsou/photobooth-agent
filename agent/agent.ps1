@@ -2229,7 +2229,20 @@ function Get-DisplayInfo {
         [PSCustomObject]@{ name = "$($_.FriendlyName)"; status = "$($_.Status)" }
     })
 
-    $script:DisplayInfo = [PSCustomObject]@{ monitors = $Monitors; adapters = $Adapters }
+    # The resolution actually in use. LumaBooth compares the welcome screen design
+    # to it and nags on every launch when they differ, so we have to know it from
+    # here: nobody is going to read it off a booth in a van. Win32_VideoController
+    # reports the active mode even with no interactive session.
+    $Modes = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+        Where-Object { $_.CurrentHorizontalResolution } | ForEach-Object {
+            [PSCustomObject]@{
+                name   = "$($_.Name)"
+                width  = [int]$_.CurrentHorizontalResolution
+                height = [int]$_.CurrentVerticalResolution
+            }
+        })
+
+    $script:DisplayInfo = [PSCustomObject]@{ monitors = $Monitors; adapters = $Adapters; modes = $Modes }
     return $script:DisplayInfo
 }
 
